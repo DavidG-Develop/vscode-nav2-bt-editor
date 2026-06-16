@@ -1,6 +1,25 @@
 import * as vscode from "vscode";
-import { parseBehaviorTreeXml } from "./bt_parser";
+import {
+  parseBehaviorTreeXml,
+  updateXmlAttributeByPath
+} from "./bt_parser";
 import { getWebviewHtml } from "./webview";
+
+type WebviewMessage =
+  | {
+      type: "selectNode";
+      path: number[];
+    }
+  | {
+      type: "revealNode";
+      startOffset: number;
+    }
+  | {
+      type: "updateAttribute";
+      path: number[];
+      attrName: string;
+      attrValue: string;
+    };
 
 export function activate(context: vscode.ExtensionContext): void {
   const disposable = vscode.commands.registerCommand(
@@ -23,12 +42,16 @@ export function activate(context: vscode.ExtensionContext): void {
         return;
       }
 
+      let selectedPath: number[] | undefined;
+      let refreshTimer: ReturnType<typeof setTimeout> | undefined;
+
       const panel = vscode.window.createWebviewPanel(
         "nav2BtPreview",
         "Nav2 BT Preview",
         vscode.ViewColumn.Beside,
         {
           enableScripts: true,
+          retainContextWhenHidden: true,
           localResourceRoots: [
             vscode.Uri.joinPath(context.extensionUri, "media")
           ]
@@ -43,7 +66,8 @@ export function activate(context: vscode.ExtensionContext): void {
           panel.webview.html = getWebviewHtml(
             panel.webview,
             context.extensionUri,
-            nodes
+            nodes,
+            selectedPath
           );
         } catch (error) {
           const message =
@@ -53,17 +77,71 @@ export function activate(context: vscode.ExtensionContext): void {
         }
       }
 
+      function scheduleUpdatePreview(): void {
+        if (refreshTimer) {
+          clearTimeout(refreshTimer);
+        }
+
+        refreshTimer = setTimeout(() => {
+          updatePreview();
+        }, 80);
+      }
+
+      panel.webview.onDidReceiveMessage(
+        async (message: WebviewMessage) => {
+          if (message.type === "selectNode") {
+            selectedPath = message.path;
+            return;
+          }
+
+          if (message.type === "revealNode") {
+            await revealNode(targetDocument, message.startOffset);
+            return;
+          }
+
+          if (message.type === "updateAttribute") {
+            selectedPath = message.path;
+
+            const updated = await updateAttribute(targetDocument, message);
+
+            if (!updated) {
+              return;
+            }
+
+            const autoSaveEdits = getAutoSaveEditsSetting(targetDocument.uri);
+
+            if (autoSaveEdits) {
+              const saved = await targetDocument.save();
+
+              if (!saved) {
+                vscode.window.showWarningMessage(
+                  "XML attribute was updated, but the file could not be saved automatically."
+                );
+              }
+            }
+
+            scheduleUpdatePreview();
+          }
+        },
+        undefined,
+        context.subscriptions
+      );
+
       updatePreview();
 
       const changeSubscription = vscode.workspace.onDidChangeTextDocument(
         (event) => {
           if (event.document.uri.toString() === targetDocument.uri.toString()) {
-            updatePreview();
+            scheduleUpdatePreview();
           }
         }
       );
 
       panel.onDidDispose(() => {
+        if (refreshTimer) {
+          clearTimeout(refreshTimer);
+        }
+
         changeSubscription.dispose();
       });
     }
@@ -88,6 +166,63 @@ async function getTargetDocument(
   }
 
   return undefined;
+}
+
+function getAutoSaveEditsSetting(resourceUri: vscode.Uri): boolean {
+  return vscode.workspace
+    .getConfiguration("nav2BtPreview", resourceUri)
+    .get<boolean>("autoSaveEdits", true);
+}
+
+async function revealNode(
+  document: vscode.TextDocument,
+  startOffset: number
+): Promise<void> {
+  const editor = await vscode.window.showTextDocument(
+    document,
+    vscode.ViewColumn.One
+  );
+
+  const position = document.positionAt(startOffset);
+  const range = new vscode.Range(position, position);
+
+  editor.selection = new vscode.Selection(position, position);
+  editor.revealRange(range, vscode.TextEditorRevealType.InCenter);
+}
+
+async function updateAttribute(
+  document: vscode.TextDocument,
+  message: Extract<WebviewMessage, { type: "updateAttribute" }>
+): Promise<boolean> {
+  const xmlText = document.getText();
+
+  const updatedXml = updateXmlAttributeByPath(
+    xmlText,
+    message.path,
+    message.attrName,
+    message.attrValue
+  );
+
+  if (updatedXml === xmlText) {
+    return true;
+  }
+
+  const fullRange = new vscode.Range(
+    document.positionAt(0),
+    document.positionAt(xmlText.length)
+  );
+
+  const edit = new vscode.WorkspaceEdit();
+  edit.replace(document.uri, fullRange, updatedXml);
+
+  const success = await vscode.workspace.applyEdit(edit);
+
+  if (!success) {
+    vscode.window.showErrorMessage("Failed to update XML attribute.");
+    return false;
+  }
+
+  return true;
 }
 
 function getErrorHtml(message: string): string {

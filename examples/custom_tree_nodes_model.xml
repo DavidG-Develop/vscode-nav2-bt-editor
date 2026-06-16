@@ -1,0 +1,45 @@
+<root main_tree_to_execute="MainTree">
+  <BehaviorTree ID="MainTree">
+    <Sequence name="MissionSequence">
+      <IsDoorClosed door_id="{target_door}"/>
+
+      <RetryUntilSuccessful num_attempts="3" name="RetryDoorOpening">
+        <OpenDoor door_id="{target_door}" timeout="5.0"/>
+      </RetryUntilSuccessful>
+
+      <Fallback name="NavigationOrRecovery">
+        <NavigateThroughDoor door_id="{target_door}" goal="{goal}"/>
+        <Sequence name="DoorRecoverySequence">
+          <ClearDoorCostmap service_name="/door_costmap/clear_entirely_local_costmap"/>
+          <NavigateThroughDoor door_id="{target_door}" goal="{goal}"/>
+        </Sequence>
+      </Fallback>
+
+      <CloseDoor door_id="{target_door}"/>
+    </Sequence>
+  </BehaviorTree>
+
+  <TreeNodesModel>
+    <Condition ID="IsDoorClosed">
+      <input_port name="door_id"/>
+    </Condition>
+
+    <Action ID="OpenDoor">
+      <input_port name="door_id"/>
+      <input_port name="timeout"/>
+    </Action>
+
+    <Action ID="NavigateThroughDoor">
+      <input_port name="door_id"/>
+      <input_port name="goal"/>
+    </Action>
+
+    <Action ID="ClearDoorCostmap">
+      <input_port name="service_name"/>
+    </Action>
+
+    <Action ID="CloseDoor">
+      <input_port name="door_id"/>
+    </Action>
+  </TreeNodesModel>
+</root>

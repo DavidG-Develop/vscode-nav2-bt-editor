@@ -3,7 +3,7 @@
   "displayName": "Nav2 BT Preview",
   "description": "Simple VS Code previewer for ROS 2 Nav2 and BehaviorTree.CPP XML behavior trees.",
   "version": "0.0.2",
-  "publisher": "dumperdg",
+  "publisher": "DavidG-Develop",
   "engines": {
     "vscode": "^1.90.0"
   },
@@ -22,6 +22,16 @@
         "title": "Nav2 BT Preview: Open Preview"
       }
     ],
+    "configuration": {
+      "title": "Nav2 BT Preview",
+      "properties": {
+        "nav2BtPreview.autoSaveEdits": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically save the XML file after applying attribute changes from the behavior tree preview."
+        }
+      }
+    },
     "menus": {
       "editor/title": [
         {

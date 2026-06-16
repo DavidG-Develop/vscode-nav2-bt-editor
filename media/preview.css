@@ -27,9 +27,14 @@ body {
   overflow: auto;
 }
 
-h2,
-h3 {
+.details-panel h2 {
   margin-top: 0;
+  margin-bottom: 16px;
+}
+
+.details-panel h3 {
+  margin-top: 22px;
+  margin-bottom: 8px;
 }
 
 .tree-toolbar {
@@ -128,6 +133,28 @@ h3 {
   opacity: 0.82;
 }
 
+.xml-section {
+  margin-bottom: 24px;
+}
+
+.xml-preview {
+  max-height: 160px;
+  overflow: auto;
+  padding: 8px;
+  margin: 8px 0 10px 0;
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 4px;
+  background: var(--vscode-textCodeBlock-background);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.source-location {
+  margin: 0 0 6px 0;
+  opacity: 0.8;
+  font-size: 12px;
+}
+
 .attr-table {
   width: 100%;
   border-collapse: collapse;
@@ -142,6 +169,43 @@ h3 {
 .attr-name {
   font-weight: bold;
   white-space: nowrap;
+}
+
+.attr-input,
+.add-attr-row input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 4px 6px;
+  border: 1px solid var(--vscode-input-border, var(--vscode-panel-border));
+  color: var(--vscode-input-foreground);
+  background: var(--vscode-input-background);
+}
+
+.attr-apply-button,
+#reveal-node-button,
+#add-attr-button {
+  padding: 4px 8px;
+  border: 1px solid var(--vscode-button-border, var(--vscode-panel-border));
+  border-radius: 4px;
+  color: var(--vscode-button-foreground);
+  background: var(--vscode-button-background);
+  cursor: pointer;
+}
+
+.attr-apply-button:hover,
+#reveal-node-button:hover,
+#add-attr-button:hover {
+  background: var(--vscode-button-hoverBackground);
+}
+
+#reveal-node-button {
+  margin-bottom: 14px;
+}
+
+.add-attr-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  gap: 6px;
 }
 
 .empty {

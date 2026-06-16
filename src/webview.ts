@@ -4,7 +4,8 @@ import { BtNode } from "./bt_parser";
 export function getWebviewHtml(
   webview: vscode.Webview,
   extensionUri: vscode.Uri,
-  nodes: BtNode[]
+  nodes: BtNode[],
+  selectedPath?: number[]
 ): string {
   const scriptUri = webview.asWebviewUri(
     vscode.Uri.joinPath(extensionUri, "media", "preview.js")
@@ -16,6 +17,7 @@ export function getWebviewHtml(
 
   const nonce = getNonce();
   const initialData = JSON.stringify(nodes).replace(/</g, "\\u003c");
+  const initialSelectedPath = JSON.stringify(selectedPath ?? null);
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -32,7 +34,6 @@ export function getWebviewHtml(
 <body>
   <div class="app">
     <div class="tree-panel">
-      <h2>Behavior Tree</h2>
       <div id="tree"></div>
     </div>
 
@@ -46,6 +47,7 @@ export function getWebviewHtml(
 
   <script nonce="${nonce}">
     window.initialBtNodes = ${initialData};
+    window.initialSelectedPath = ${initialSelectedPath};
   </script>
   <script nonce="${nonce}" src="${scriptUri}"></script>
 </body>
