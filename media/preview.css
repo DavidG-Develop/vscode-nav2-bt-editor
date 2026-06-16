@@ -9,53 +9,123 @@ body {
 .app {
   display: flex;
   height: 100vh;
+  overflow: hidden;
 }
 
 .tree-panel {
+  position: relative;
   flex: 1;
   padding: 16px;
-  overflow: auto;
+  overflow: hidden;
   border-right: 1px solid var(--vscode-panel-border);
 }
 
 .details-panel {
   width: 360px;
+  min-width: 360px;
   padding: 16px;
   overflow: auto;
 }
 
-h2 {
+h2,
+h3 {
   margin-top: 0;
-  font-size: 16px;
 }
 
-.bt-node {
-  margin: 4px 0;
-  padding-left: 16px;
-}
-
-.bt-node-label {
-  display: inline-block;
-  padding: 4px 8px;
+.tree-toolbar {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 10;
+  display: flex;
+  gap: 6px;
+  padding: 6px;
   border: 1px solid var(--vscode-panel-border);
-  border-radius: 4px;
-  cursor: pointer;
-  background: var(--vscode-button-secondaryBackground);
-  color: var(--vscode-button-secondaryForeground);
+  border-radius: 6px;
+  background: var(--vscode-editor-background);
 }
 
-.bt-node-label:hover {
+.tree-toolbar button {
+  min-width: 32px;
+  padding: 3px 8px;
+  border: 1px solid var(--vscode-button-border, var(--vscode-panel-border));
+  border-radius: 4px;
+  color: var(--vscode-button-foreground);
+  background: var(--vscode-button-background);
+  cursor: pointer;
+}
+
+.tree-toolbar button:hover {
   background: var(--vscode-button-hoverBackground);
 }
 
-.bt-node-label.selected {
-  outline: 2px solid var(--vscode-focusBorder);
+.bt-svg {
+  display: block;
+  width: 100%;
+  height: calc(100vh - 32px);
+  background: var(--vscode-editor-background);
+  cursor: grab;
 }
 
-.bt-node-children {
-  margin-left: 20px;
-  border-left: 1px solid var(--vscode-panel-border);
-  padding-left: 8px;
+.bt-svg.panning {
+  cursor: grabbing;
+}
+
+.bt-edge {
+  fill: none;
+  stroke: var(--vscode-editor-foreground);
+  stroke-width: 1.8;
+  opacity: 0.75;
+}
+
+.edge-arrow {
+  fill: var(--vscode-editor-foreground);
+}
+
+.bt-node-group .bt-shape {
+  stroke-width: 2;
+}
+
+.bt-node-group.kind-control .bt-shape {
+  fill: rgba(86, 156, 214, 0.18);
+  stroke: rgb(86, 156, 214);
+}
+
+.bt-node-group.kind-decorator .bt-shape {
+  fill: rgba(197, 134, 192, 0.18);
+  stroke: rgb(197, 134, 192);
+}
+
+.bt-node-group.kind-action .bt-shape {
+  fill: rgba(78, 201, 176, 0.18);
+  stroke: rgb(78, 201, 176);
+}
+
+.bt-node-group.kind-condition .bt-shape {
+  fill: rgba(181, 206, 168, 0.18);
+  stroke: rgb(181, 206, 168);
+}
+
+.bt-node-group.selected .bt-shape {
+  stroke: var(--vscode-focusBorder);
+  stroke-width: 3;
+}
+
+.bt-text {
+  fill: var(--vscode-editor-foreground);
+  dominant-baseline: middle;
+  user-select: none;
+  pointer-events: none;
+}
+
+.bt-text-primary {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.bt-text-secondary {
+  font-size: 12px;
+  opacity: 0.82;
 }
 
 .attr-table {
