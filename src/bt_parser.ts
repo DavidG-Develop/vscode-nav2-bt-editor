@@ -28,53 +28,150 @@ type InternalXmlNode = Omit<BtNode, "kind" | "children"> & {
 type TreeNodeModelCatalog = Map<string, BtNodeKind>;
 
 const BUILTIN_CONTROL_NODES = new Set([
+  // XML / wrapper nodes
   "BehaviorTree",
+
+  // BehaviorTree.CPP controls
   "Sequence",
+  "AsyncSequence",
   "SequenceStar",
+  "SequenceWithMemory",
+  "ReactiveSequence",
   "Fallback",
+  "AsyncFallback",
   "Selector",
   "ReactiveFallback",
-  "ReactiveSequence",
+  "Parallel",
+  "ParallelAll",
+  "IfThenElse",
+  "WhileDoElse",
+  "Switch2",
+  "Switch3",
+  "Switch4",
+  "Switch5",
+  "Switch6",
+
+  // Nav2 controls
   "PipelineSequence",
   "RecoveryNode",
   "RoundRobin",
-  "Parallel",
   "NonblockingSequence",
-  "PersistentSequence"
+  "PersistentSequence",
+  "PauseResumeController"
 ]);
 
 const BUILTIN_DECORATOR_NODES = new Set([
+  // BehaviorTree.CPP decorators
   "Inverter",
-  "RetryUntilSuccessful",
+  "ForceSuccess",
+  "ForceFailure",
   "Repeat",
-  "RepeatUntilFailure",
+  "RetryUntilSuccessful",
+  "RetryUntilSuccesful",
   "KeepRunningUntilFailure",
+  "Delay",
+  "Timeout",
+  "RunOnce",
+  "Precondition",
+  "SubTree",
+  "SubTreePlus",
+
+  // Nav2 decorators
   "RateController",
   "DistanceController",
   "SpeedController",
   "GoalUpdater",
+  "GoalUpdatedController",
   "SingleTrigger",
-  "Timeout",
-  "RunOnce",
-  "ForceSuccess",
-  "ForceFailure"
+  "PathLongerOnApproach"
 ]);
 
 const BUILTIN_CONDITION_NODES = new Set([
-  "GoalUpdated",
-  "GoalReached",
+  // Common / BehaviorTree.CPP-ish conditions
+  "AlwaysSuccess",
+  "AlwaysFailure",
+  "ScriptCondition",
+
+  // Nav2 conditions
+  "AreErrorCodesPresent",
+  "ArePosesNear",
+  "DistanceTraveled",
   "GloballyUpdatedGoal",
-  "IsPathValid",
-  "IsBatteryLow",
-  "TransformAvailable",
+  "GoalReached",
+  "GoalUpdated",
   "InitialPoseReceived",
+  "IsBatteryCharging",
+  "IsBatteryLow",
+  "IsGoalNearby",
+  "IsPathValid",
+  "IsStuck",
+  "IsWithinPathTrackingBounds",
+  "PathExpiringTimer",
+  "TimeExpired",
+  "TransformAvailable",
   "WouldAControllerRecoveryHelp",
   "WouldAPlannerRecoveryHelp",
-  "WouldASmootherRecoveryHelp",
-  "IsStuck",
-  "TimeExpired",
-  "DistanceTraveled",
-  "PathExpiringTimer"
+  "WouldARouteRecoveryHelp",
+  "WouldASmootherRecoveryHelp"
+]);
+
+const BUILTIN_ACTION_NODES = new Set([
+  // BehaviorTree.CPP common test/simple actions
+  "AlwaysSuccess",
+  "AlwaysFailure",
+  "SetBlackboard",
+  "UnsetBlackboard",
+  "Script",
+  "Sleep",
+
+  // Nav2 actions / services / selector nodes
+  "AppendGoalPoseToGoals",
+  "AssistedTeleop",
+  "CancelAssistedTeleop",
+  "AssistedTeleopCancel",
+  "BackUp",
+  "CancelBackUp",
+  "BackUpCancel",
+  "ClearEntireCostmap",
+  "ClearCostmapAroundRobot",
+  "ClearCostmapExceptRegion",
+  "ComputeAndTrackRoute",
+  "CancelComputeAndTrackRoute",
+  "ComputeAndTrackRouteCancel",
+  "ComputePathThroughPoses",
+  "ComputePathToPose",
+  "ComputeRoute",
+  "ConcatenatePaths",
+  "CancelControl",
+  "ControllerCancel",
+  "ControllerSelector",
+  "DriveOnHeading",
+  "CancelDriveOnHeading",
+  "DriveOnHeadingCancel",
+  "ExtractRouteNodesAsGoals",
+  "FollowPath",
+  "FollowObject",
+  "GetCurrentPose",
+  "GetNextFewGoals",
+  "GetPoseFromPath",
+  "GoalCheckerSelector",
+  "NavigateThroughPoses",
+  "NavigateToPose",
+  "PlannerSelector",
+  "ProgressCheckerSelector",
+  "ReinitializeGlobalLocalization",
+  "RemoveInCollisionGoals",
+  "RemovePassedGoals",
+  "SmoothPath",
+  "SmootherSelector",
+  "Spin",
+  "CancelSpin",
+  "SpinCancel",
+  "TruncatePath",
+  "TruncatePathLocal",
+  "Wait",
+  "CancelWait",
+  "WaitCancel"
 ]);
 
 let nextId = 0;
@@ -320,6 +417,10 @@ function getNodeKind(
 
   if (BUILTIN_CONDITION_NODES.has(tag)) {
     return "condition";
+  }
+
+  if (BUILTIN_ACTION_NODES.has(tag)) {
+    return "action";
   }
 
   return "action";

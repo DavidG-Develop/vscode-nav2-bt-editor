@@ -29,6 +29,16 @@
           "type": "boolean",
           "default": true,
           "description": "Automatically save the XML file after applying attribute changes from the behavior tree preview."
+        },
+        "nav2BtPreview.openOnlyOneBehaviorTree": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show only one BehaviorTree at a time. When false, SubTree nodes can be expanded inline into one combined graph."
+        },
+        "nav2BtPreview.autoFitOnTreeChange": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically fit the graph view after opening, closing, or navigating BehaviorTree/SubTree views. When false, the current zoom and pan are preserved."
         }
       }
     },

@@ -1,8 +1,18 @@
 const vscode = acquireVsCodeApi();
 
 const nodes = window.initialBtNodes ?? [];
+const previewOptions = window.initialPreviewOptions ?? {};
+const openOnlyOneBehaviorTree =
+  previewOptions.openOnlyOneBehaviorTree !== false;
+const autoFitOnTreeChange =
+  previewOptions.autoFitOnTreeChange !== false;
+
 let selectedNodePath = window.initialSelectedPath ?? undefined;
 let selectedNodeId = undefined;
+
+let activeRootPath = undefined;
+let rootNavigationStack = [];
+let expandedSubTreeKeys = new Set();
 
 const treeContainer = document.getElementById("tree");
 const detailsContainer = document.getElementById("details");
@@ -25,6 +35,22 @@ let viewState = {
 let currentViewportGroup = undefined;
 let currentSvg = undefined;
 let currentBounds = undefined;
+let currentLayoutRoots = [];
+
+initializeActiveRoot();
+
+function initializeActiveRoot() {
+  const preferredRoot = findPreferredTopRoot(nodes);
+
+  if (preferredRoot) {
+    activeRootPath = preferredRoot.source?.path;
+    return;
+  }
+
+  if (nodes.length > 0) {
+    activeRootPath = nodes[0].source?.path;
+  }
+}
 
 function renderTree() {
   treeContainer.innerHTML = "";
@@ -34,18 +60,24 @@ function renderTree() {
     return;
   }
 
+  const activeRoot = findNodeByPathInForest(nodes, activeRootPath) ?? nodes[0];
+
+  if (!activeRootPath) {
+    activeRootPath = activeRoot.source?.path;
+  }
+
   const toolbar = document.createElement("div");
   toolbar.className = "tree-toolbar";
-
-  const zoomInButton = document.createElement("button");
-  zoomInButton.textContent = "+";
-  zoomInButton.title = "Zoom in";
-  zoomInButton.addEventListener("click", () => zoomBy(1.15));
 
   const zoomOutButton = document.createElement("button");
   zoomOutButton.textContent = "-";
   zoomOutButton.title = "Zoom out";
   zoomOutButton.addEventListener("click", () => zoomBy(1 / 1.15));
+
+  const zoomInButton = document.createElement("button");
+  zoomInButton.textContent = "+";
+  zoomInButton.title = "Zoom in";
+  zoomInButton.addEventListener("click", () => zoomBy(1.15));
 
   const fitButton = document.createElement("button");
   fitButton.textContent = "Fit";
@@ -55,17 +87,33 @@ function renderTree() {
   toolbar.appendChild(zoomOutButton);
   toolbar.appendChild(zoomInButton);
   toolbar.appendChild(fitButton);
-  treeContainer.appendChild(toolbar);
 
-  const roots = nodes.map((node) => buildLayoutTree(node));
+  if (openOnlyOneBehaviorTree) {
+    const upButton = document.createElement("button");
+    upButton.textContent = "↑";
+    upButton.title = "Go one BehaviorTree up";
+    upButton.disabled = rootNavigationStack.length === 0;
+    upButton.addEventListener("click", () => goOneTreeUp());
 
-  for (const root of roots) {
-    measureSubtree(root);
+    const topButton = document.createElement("button");
+    topButton.textContent = "Top";
+    topButton.title = "Go to top-level BehaviorTree";
+    topButton.disabled = isAtTopRoot();
+    topButton.addEventListener("click", () => goToTopTree());
+
+    toolbar.appendChild(upButton);
+    toolbar.appendChild(topButton);
   }
 
-  assignForestPositions(roots);
+  treeContainer.appendChild(toolbar);
 
-  const bounds = getForestBounds(roots);
+  const root = buildLayoutTree(activeRoot, new Set());
+  currentLayoutRoots = [root];
+
+  measureSubtree(root);
+  assignForestPositions([root]);
+
+  const bounds = getForestBounds([root]);
   currentBounds = bounds;
 
   const svg = createSvg();
@@ -77,13 +125,8 @@ function renderTree() {
   viewportGroup.setAttribute("class", "viewport-group");
   currentViewportGroup = viewportGroup;
 
-  for (const root of roots) {
-    drawEdges(viewportGroup, root);
-  }
-
-  for (const root of roots) {
-    drawNodes(viewportGroup, root);
-  }
+  drawEdges(viewportGroup, root);
+  drawNodes(viewportGroup, root);
 
   svg.appendChild(viewportGroup);
   treeContainer.appendChild(svg);
@@ -91,11 +134,15 @@ function renderTree() {
   setupPanZoom(svg);
   applyTransform();
 
-  const selectedNode = findNodeByPathInForest(roots, selectedNodePath);
+  const selectedNode = findNodeByPathInForest([root], selectedNodePath);
 
   if (selectedNode) {
     selectedNodeId = selectedNode.id;
     renderDetails(selectedNode);
+  } else {
+    selectedNodeId = root.id;
+    selectedNodePath = root.source?.path;
+    renderDetails(root);
   }
 
   if (!viewState.initialized) {
@@ -106,29 +153,187 @@ function renderTree() {
   }
 }
 
-function buildLayoutTree(node) {
-  const kind = node.kind ?? "action";
-  const size = getNodeSize(node, kind);
+function findPreferredTopRoot(roots) {
+  const mainTree = roots.find((node) => {
+    return node.tag === "BehaviorTree" && node.attributes?.ID === "MainTree";
+  });
 
-  return {
+  if (mainTree) {
+    return mainTree;
+  }
+
+  return roots.find((node) => node.tag === "BehaviorTree") ?? roots[0];
+}
+
+function getTopRoot() {
+  return findPreferredTopRoot(nodes);
+}
+
+function isAtTopRoot() {
+  const topRoot = getTopRoot();
+
+  if (!topRoot) {
+    return true;
+  }
+
+  return pathsEqual(activeRootPath, topRoot.source?.path);
+}
+
+function goOneTreeUp() {
+  const previousRootPath = rootNavigationStack.pop();
+
+  if (!previousRootPath) {
+    return;
+  }
+
+  const previousRoot = findNodeByPathInForest(nodes, previousRootPath);
+
+  if (!previousRoot) {
+    return;
+  }
+
+  activeRootPath = previousRootPath;
+  selectedNodePath = previousRoot.source?.path;
+  selectedNodeId = undefined;
+
+  vscode.postMessage({
+    type: "selectNode",
+    path: selectedNodePath
+  });
+
+  handleTreeStructureChange();
+  renderTree();
+
+  requestAnimationFrame(() => {
+    applyPostTreeChangeView();
+  });
+}
+
+function goToTopTree() {
+  const topRoot = getTopRoot();
+
+  if (!topRoot) {
+    return;
+  }
+
+  rootNavigationStack = [];
+  activeRootPath = topRoot.source?.path;
+  selectedNodePath = topRoot.source?.path;
+  selectedNodeId = undefined;
+
+  vscode.postMessage({
+    type: "selectNode",
+    path: selectedNodePath
+  });
+
+  handleTreeStructureChange();
+  renderTree();
+
+  requestAnimationFrame(() => {
+    applyPostTreeChangeView();
+  });
+}
+
+function handleTreeStructureChange() {
+  if (autoFitOnTreeChange) {
+    viewState.initialized = false;
+  }
+}
+
+function applyPostTreeChangeView() {
+  if (autoFitOnTreeChange) {
+    fitToScreen();
+  }
+}
+
+function buildLayoutTree(node, expansionStack) {
+  const kind = node.kind ?? "action";
+  const visualKind = getVisualKind(node);
+  const size = getNodeSize(node, kind, visualKind);
+  const subTreeKey = getSubTreeExpansionKey(node);
+
+  const layoutNode = {
     ...node,
     kind,
+    visualKind,
+    subTreeKey,
     width: size.width,
     height: size.height,
     subtreeWidth: 0,
     x: 0,
     y: 0,
-    children: (node.children ?? []).map(buildLayoutTree)
+    inlineExpanded: false,
+    inlineCycle: false,
+    children: []
   };
+
+  if (
+    !openOnlyOneBehaviorTree &&
+    isSubTreeNode(node) &&
+    subTreeKey &&
+    expandedSubTreeKeys.has(subTreeKey)
+  ) {
+    const targetId = node.attributes?.ID;
+    const targetTree = targetId ? findBehaviorTreeById(nodes, targetId) : undefined;
+
+    if (targetTree) {
+      if (expansionStack.has(targetId)) {
+        layoutNode.inlineCycle = true;
+        return layoutNode;
+      }
+
+      const nextStack = new Set(expansionStack);
+      nextStack.add(targetId);
+
+      layoutNode.inlineExpanded = true;
+      layoutNode.children = (targetTree.children ?? []).map((child) =>
+        buildLayoutTree(child, nextStack)
+      );
+
+      return layoutNode;
+    }
+  }
+
+  layoutNode.children = (node.children ?? []).map((child) =>
+    buildLayoutTree(child, expansionStack)
+  );
+
+  return layoutNode;
 }
 
-function getNodeSize(node, kind) {
+function getVisualKind(node) {
+  if (node.tag === "BehaviorTree") {
+    return "tree";
+  }
+
+  if (isSubTreeNode(node)) {
+    return "subtree";
+  }
+
+  return node.kind ?? "action";
+}
+
+function getNodeSize(node, kind, visualKind) {
   const label = getPrimaryLabel(node);
   const secondary = getSecondaryLabel(node);
 
   const longestLine = Math.max(label.length, secondary.length);
   const textWidth = Math.max(90, longestLine * 8 + 32);
   const hasExtraLine = Boolean(secondary);
+
+  if (visualKind === "tree") {
+    return {
+      width: Math.max(170, textWidth),
+      height: hasExtraLine ? 72 : 62
+    };
+  }
+
+  if (visualKind === "subtree") {
+    return {
+      width: Math.max(160, textWidth),
+      height: hasExtraLine ? 70 : 60
+    };
+  }
 
   switch (kind) {
     case "action":
@@ -159,12 +364,24 @@ function getNodeSize(node, kind) {
 }
 
 function getPrimaryLabel(node) {
+  if (node.tag === "BehaviorTree") {
+    return "BehaviorTree";
+  }
+
+  if (isSubTreeNode(node)) {
+    return node.tag;
+  }
+
   return node.tag;
 }
 
 function getSecondaryLabel(node) {
   if (node.name && node.name !== node.tag) {
     return node.name;
+  }
+
+  if (isSubTreeNode(node) && node.attributes?.ID) {
+    return node.attributes.ID;
   }
 
   return "";
@@ -188,6 +405,22 @@ function getVisibleAttributes(node) {
   return Object.entries(attrs).filter(([key, value]) => {
     return !isDisplayNameAttribute(node, key, value);
   });
+}
+
+function isSubTreeNode(node) {
+  return node.tag === "SubTree" || node.tag === "SubTreePlus";
+}
+
+function getSubTreeExpansionKey(node) {
+  if (!isSubTreeNode(node) || !Array.isArray(node.source?.path)) {
+    return undefined;
+  }
+
+  return pathToKey(node.source.path);
+}
+
+function pathToKey(path) {
+  return path.join(".");
 }
 
 function measureSubtree(node) {
@@ -344,7 +577,15 @@ function drawEdges(parent, node) {
 
 function drawNodes(parent, node) {
   const group = document.createElementNS("http://www.w3.org/2000/svg", "g");
-  group.setAttribute("class", `bt-node-group kind-${node.kind}`);
+  group.setAttribute("class", `bt-node-group kind-${node.kind} visual-${node.visualKind}`);
+
+  if (node.inlineExpanded) {
+    group.classList.add("inline-expanded");
+  }
+
+  if (node.inlineCycle) {
+    group.classList.add("inline-cycle");
+  }
 
   if (node.id === selectedNodeId || pathsEqual(node.source?.path, selectedNodePath)) {
     group.classList.add("selected");
@@ -358,22 +599,44 @@ function drawNodes(parent, node) {
 
   group.addEventListener("click", (event) => {
     event.stopPropagation();
-
-    selectedNodeId = node.id;
-    selectedNodePath = node.source?.path;
-
-    if (selectedNodePath) {
-      vscode.postMessage({
-        type: "selectNode",
-        path: selectedNodePath
-      });
-    }
-
-    renderDetails(node);
-    renderTree();
+    selectNode(node, false);
   });
 
-  if (node.kind === "action") {
+  group.addEventListener("dblclick", (event) => {
+    event.stopPropagation();
+
+    if (!isSubTreeNode(node)) {
+      return;
+    }
+
+    if (openOnlyOneBehaviorTree) {
+      openSubTreeTarget(node);
+      return;
+    }
+
+    toggleInlineSubTree(node);
+  });
+
+  drawNodeShape(group, node);
+  appendNodeText(group, node);
+
+  if (isSubTreeNode(node)) {
+    appendSubTreeHint(group, node);
+  }
+
+  parent.appendChild(group);
+
+  for (const child of node.children ?? []) {
+    drawNodes(parent, child);
+  }
+}
+
+function drawNodeShape(group, node) {
+  if (
+    node.visualKind === "action" ||
+    node.visualKind === "tree" ||
+    node.visualKind === "subtree"
+  ) {
     const ellipse = document.createElementNS("http://www.w3.org/2000/svg", "ellipse");
     ellipse.setAttribute("cx", String(node.x));
     ellipse.setAttribute("cy", String(node.y));
@@ -381,32 +644,25 @@ function drawNodes(parent, node) {
     ellipse.setAttribute("ry", String(node.height / 2));
     ellipse.setAttribute("class", "bt-shape");
     group.appendChild(ellipse);
+    return;
+  }
+
+  const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+  rect.setAttribute("x", String(node.x - node.width / 2));
+  rect.setAttribute("y", String(node.y - node.height / 2));
+  rect.setAttribute("width", String(node.width));
+  rect.setAttribute("height", String(node.height));
+  rect.setAttribute("class", "bt-shape");
+
+  if (node.visualKind === "condition") {
+    rect.setAttribute("rx", "20");
+    rect.setAttribute("ry", "20");
   } else {
-    const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
-    rect.setAttribute("x", String(node.x - node.width / 2));
-    rect.setAttribute("y", String(node.y - node.height / 2));
-    rect.setAttribute("width", String(node.width));
-    rect.setAttribute("height", String(node.height));
-    rect.setAttribute("class", "bt-shape");
-
-    if (node.kind === "condition") {
-      rect.setAttribute("rx", "20");
-      rect.setAttribute("ry", "20");
-    } else {
-      rect.setAttribute("rx", "5");
-      rect.setAttribute("ry", "5");
-    }
-
-    group.appendChild(rect);
+    rect.setAttribute("rx", "5");
+    rect.setAttribute("ry", "5");
   }
 
-  appendNodeText(group, node);
-
-  parent.appendChild(group);
-
-  for (const child of node.children ?? []) {
-    drawNodes(parent, child);
-  }
+  group.appendChild(rect);
 }
 
 function appendNodeText(group, node) {
@@ -417,6 +673,10 @@ function appendNodeText(group, node) {
 
   if (secondaryLabel) {
     lines.push(secondaryLabel);
+  }
+
+  if (node.inlineCycle) {
+    lines.push("cycle blocked");
   }
 
   const lineHeight = 16;
@@ -434,6 +694,213 @@ function appendNodeText(group, node) {
     text.textContent = line;
     group.appendChild(text);
   });
+}
+
+function appendSubTreeHint(group, node) {
+  const hint = document.createElementNS("http://www.w3.org/2000/svg", "text");
+  hint.setAttribute("x", String(node.x));
+  hint.setAttribute("y", String(node.y + node.height / 2 + 18));
+  hint.setAttribute("text-anchor", "middle");
+  hint.setAttribute("class", "bt-text bt-text-hint");
+
+  if (openOnlyOneBehaviorTree) {
+    hint.textContent = "double-click to open";
+  } else if (node.inlineExpanded) {
+    hint.textContent = "double-click to collapse";
+  } else if (node.inlineCycle) {
+    hint.textContent = "cycle blocked";
+  } else if (node.attributes?.ID && findBehaviorTreeById(nodes, node.attributes.ID)) {
+    hint.textContent = "double-click to expand";
+  } else {
+    hint.textContent = "subtree target missing";
+  }
+
+  group.appendChild(hint);
+}
+
+function selectNode(node, center) {
+  selectedNodeId = node.id;
+  selectedNodePath = node.source?.path;
+
+  if (selectedNodePath) {
+    vscode.postMessage({
+      type: "selectNode",
+      path: selectedNodePath
+    });
+  }
+
+  renderDetails(node);
+  renderTree();
+
+  if (center) {
+    requestAnimationFrame(() => {
+      const selectedNode = findNodeByPathInForest(currentLayoutRoots, selectedNodePath);
+
+      if (selectedNode) {
+        centerOnNode(selectedNode);
+      }
+    });
+  }
+}
+
+function toggleInlineSubTree(subTreeNode) {
+  const subTreeKey = subTreeNode.subTreeKey ?? getSubTreeExpansionKey(subTreeNode);
+
+  if (!subTreeKey) {
+    return;
+  }
+
+  selectedNodeId = undefined;
+  selectedNodePath = subTreeNode.source?.path;
+
+  if (expandedSubTreeKeys.has(subTreeKey)) {
+    expandedSubTreeKeys.delete(subTreeKey);
+    expandedSubTreeKeys = pruneUnreachableExpandedSubTrees();
+  } else {
+    expandedSubTreeKeys.add(subTreeKey);
+  }
+
+  if (selectedNodePath) {
+    vscode.postMessage({
+      type: "selectNode",
+      path: selectedNodePath
+    });
+  }
+
+  handleTreeStructureChange();
+  renderTree();
+
+  requestAnimationFrame(() => {
+    applyPostTreeChangeView();
+  });
+}
+
+function pruneUnreachableExpandedSubTrees() {
+  const activeRoot = findNodeByPathInForest(nodes, activeRootPath) ?? nodes[0];
+  const reachableExpandedKeys = new Set();
+
+  collectReachableExpandedSubTreeKeys(
+    activeRoot,
+    new Set(),
+    reachableExpandedKeys
+  );
+
+  return reachableExpandedKeys;
+}
+
+function collectReachableExpandedSubTreeKeys(
+  node,
+  expansionStack,
+  reachableExpandedKeys
+) {
+  if (!node) {
+    return;
+  }
+
+  if (!openOnlyOneBehaviorTree && isSubTreeNode(node)) {
+    const subTreeKey = getSubTreeExpansionKey(node);
+
+    if (subTreeKey && expandedSubTreeKeys.has(subTreeKey)) {
+      const targetId = node.attributes?.ID;
+      const targetTree = targetId
+        ? findBehaviorTreeById(nodes, targetId)
+        : undefined;
+
+      if (!targetTree || expansionStack.has(targetId)) {
+        return;
+      }
+
+      reachableExpandedKeys.add(subTreeKey);
+
+      const nextStack = new Set(expansionStack);
+      nextStack.add(targetId);
+
+      for (const child of targetTree.children ?? []) {
+        collectReachableExpandedSubTreeKeys(
+          child,
+          nextStack,
+          reachableExpandedKeys
+        );
+      }
+
+      return;
+    }
+  }
+
+  for (const child of node.children ?? []) {
+    collectReachableExpandedSubTreeKeys(
+      child,
+      expansionStack,
+      reachableExpandedKeys
+    );
+  }
+}
+
+function openSubTreeTarget(subTreeNode) {
+  const targetId = subTreeNode.attributes?.ID;
+
+  if (!targetId) {
+    return;
+  }
+
+  const targetTree = findBehaviorTreeById(nodes, targetId);
+
+  if (!targetTree) {
+    return;
+  }
+
+  const currentRoot = findNodeByPathInForest(nodes, activeRootPath);
+
+  if (currentRoot?.source?.path) {
+    rootNavigationStack.push(currentRoot.source.path);
+  }
+
+  activeRootPath = targetTree.source?.path;
+  selectedNodeId = undefined;
+  selectedNodePath = targetTree.source?.path;
+
+  if (selectedNodePath) {
+    vscode.postMessage({
+      type: "selectNode",
+      path: selectedNodePath
+    });
+  }
+
+  handleTreeStructureChange();
+  renderDetails(targetTree);
+  renderTree();
+
+  requestAnimationFrame(() => {
+    applyPostTreeChangeView();
+  });
+}
+
+function findBehaviorTreeById(roots, id) {
+  for (const root of roots) {
+    const result = findBehaviorTreeByIdRecursive(root, id);
+
+    if (result) {
+      return result;
+    }
+  }
+
+  return undefined;
+}
+
+function findBehaviorTreeByIdRecursive(node, id) {
+  if (node.tag === "BehaviorTree" && node.attributes?.ID === id) {
+    return node;
+  }
+
+  for (const child of node.children ?? []) {
+    const result = findBehaviorTreeByIdRecursive(child, id);
+
+    if (result) {
+      return result;
+    }
+  }
+
+  return undefined;
 }
 
 function setupPanZoom(svg) {
@@ -543,6 +1010,23 @@ function fitToScreen() {
   applyTransform();
 }
 
+function centerOnNode(node) {
+  if (!currentSvg || !node) {
+    return;
+  }
+
+  const rect = currentSvg.getBoundingClientRect();
+
+  if (rect.width <= 0 || rect.height <= 0) {
+    return;
+  }
+
+  viewState.x = rect.width / 2 - node.x * viewState.scale;
+  viewState.y = rect.height / 2 - node.y * viewState.scale;
+
+  applyTransform();
+}
+
 function applyTransform() {
   if (!currentViewportGroup) {
     return;
@@ -596,6 +1080,16 @@ function renderDetails(node) {
     ${
       node.name
         ? `<p><strong>Name:</strong> ${escapeHtml(node.name)}</p>`
+        : ""
+    }
+    ${
+      node.inlineExpanded
+        ? `<p><strong>SubTree:</strong> expanded inline</p>`
+        : ""
+    }
+    ${
+      node.inlineCycle
+        ? `<p><strong>SubTree:</strong> cycle blocked</p>`
         : ""
     }
 

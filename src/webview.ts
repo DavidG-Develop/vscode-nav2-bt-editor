@@ -1,11 +1,17 @@
 import * as vscode from "vscode";
 import { BtNode } from "./bt_parser";
 
+export type PreviewOptions = {
+  openOnlyOneBehaviorTree: boolean;
+  autoFitOnTreeChange: boolean;
+};
+
 export function getWebviewHtml(
   webview: vscode.Webview,
   extensionUri: vscode.Uri,
   nodes: BtNode[],
-  selectedPath?: number[]
+  selectedPath: number[] | undefined,
+  options: PreviewOptions
 ): string {
   const scriptUri = webview.asWebviewUri(
     vscode.Uri.joinPath(extensionUri, "media", "preview.js")
@@ -18,6 +24,7 @@ export function getWebviewHtml(
   const nonce = getNonce();
   const initialData = JSON.stringify(nodes).replace(/</g, "\\u003c");
   const initialSelectedPath = JSON.stringify(selectedPath ?? null);
+  const initialOptions = JSON.stringify(options).replace(/</g, "\\u003c");
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -48,6 +55,7 @@ export function getWebviewHtml(
   <script nonce="${nonce}">
     window.initialBtNodes = ${initialData};
     window.initialSelectedPath = ${initialSelectedPath};
+    window.initialPreviewOptions = ${initialOptions};
   </script>
   <script nonce="${nonce}" src="${scriptUri}"></script>
 </body>

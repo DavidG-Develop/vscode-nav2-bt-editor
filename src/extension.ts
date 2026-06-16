@@ -3,7 +3,7 @@ import {
   parseBehaviorTreeXml,
   updateXmlAttributeByPath
 } from "./bt_parser";
-import { getWebviewHtml } from "./webview";
+import { getWebviewHtml, PreviewOptions } from "./webview";
 
 type WebviewMessage =
   | {
@@ -67,7 +67,8 @@ export function activate(context: vscode.ExtensionContext): void {
             panel.webview,
             context.extensionUri,
             nodes,
-            selectedPath
+            selectedPath,
+            getPreviewOptions(targetDocument.uri)
           );
         } catch (error) {
           const message =
@@ -137,12 +138,34 @@ export function activate(context: vscode.ExtensionContext): void {
         }
       );
 
+      const configSubscription = vscode.workspace.onDidChangeConfiguration(
+        (event) => {
+          if (
+            event.affectsConfiguration(
+              "nav2BtPreview.openOnlyOneBehaviorTree",
+              targetDocument.uri
+            ) ||
+            event.affectsConfiguration(
+              "nav2BtPreview.autoFitOnTreeChange",
+              targetDocument.uri
+            ) ||
+            event.affectsConfiguration(
+              "nav2BtPreview.autoSaveEdits",
+              targetDocument.uri
+            )
+          ) {
+            scheduleUpdatePreview();
+          }
+        }
+      );
+
       panel.onDidDispose(() => {
         if (refreshTimer) {
           clearTimeout(refreshTimer);
         }
 
         changeSubscription.dispose();
+        configSubscription.dispose();
       });
     }
   );
@@ -166,6 +189,24 @@ async function getTargetDocument(
   }
 
   return undefined;
+}
+
+function getPreviewOptions(resourceUri: vscode.Uri): PreviewOptions {
+  const configuration = vscode.workspace.getConfiguration(
+    "nav2BtPreview",
+    resourceUri
+  );
+
+  return {
+    openOnlyOneBehaviorTree: configuration.get<boolean>(
+      "openOnlyOneBehaviorTree",
+      true
+    ),
+    autoFitOnTreeChange: configuration.get<boolean>(
+      "autoFitOnTreeChange",
+      true
+    )
+  };
 }
 
 function getAutoSaveEditsSetting(resourceUri: vscode.Uri): boolean {

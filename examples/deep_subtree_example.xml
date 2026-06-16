@@ -1,0 +1,139 @@
+<root main_tree_to_execute="MainTree">
+  <BehaviorTree ID="MainTree">
+    <Sequence name="MainMission">
+      <InitializeMission mission_id="{mission_id}"/>
+
+      <SubTree ID="NavigateMissionSubTree"
+               goal="{goal}"
+               target_door="{target_door}"
+               docking_station="{docking_station}"
+               _autoremap="true"/>
+
+      <FinalizeMission mission_id="{mission_id}"/>
+    </Sequence>
+  </BehaviorTree>
+
+  <BehaviorTree ID="NavigateMissionSubTree">
+    <Sequence name="NavigateMission">
+      <ComputePathToPose goal="{goal}" path="{path}" planner_id="GridBased"/>
+
+      <SubTree ID="DoorTraversalSubTree"
+               door_id="{target_door}"
+               goal="{goal}"
+               path="{path}"
+               _autoremap="true"/>
+
+      <FollowPath path="{path}" controller_id="FollowPath"/>
+
+      <SubTree ID="DockingSubTree"
+               docking_station="{docking_station}"
+               _autoremap="true"/>
+    </Sequence>
+  </BehaviorTree>
+
+  <BehaviorTree ID="DoorTraversalSubTree">
+    <Fallback name="DoorTraversalFallback">
+      <Sequence name="DoorAlreadyOpenSequence">
+        <Inverter>
+          <IsDoorClosed door_id="{door_id}"/>
+        </Inverter>
+
+        <NavigateThroughDoor door_id="{door_id}" goal="{goal}"/>
+      </Sequence>
+
+      <Sequence name="OpenAndTraverseDoorSequence">
+        <SubTree ID="DoorOpenRetrySubTree"
+                 door_id="{door_id}"
+                 _autoremap="true"/>
+
+        <NavigateThroughDoor door_id="{door_id}" goal="{goal}"/>
+
+        <CloseDoor door_id="{door_id}"/>
+      </Sequence>
+    </Fallback>
+  </BehaviorTree>
+
+  <BehaviorTree ID="DoorOpenRetrySubTree">
+    <RetryUntilSuccessful num_attempts="3" name="RetryDoorOpening">
+      <OpenDoor door_id="{door_id}" timeout="5.0"/>
+    </RetryUntilSuccessful>
+  </BehaviorTree>
+
+  <BehaviorTree ID="DockingSubTree">
+    <Sequence name="DockingSequence">
+      <ApproachDock docking_station="{docking_station}"/>
+
+      <SubTree ID="DockingAlignmentSubTree"
+               docking_station="{docking_station}"
+               _autoremap="true"/>
+
+      <DockRobot docking_station="{docking_station}"/>
+    </Sequence>
+  </BehaviorTree>
+
+  <BehaviorTree ID="DockingAlignmentSubTree">
+    <Fallback name="DockingAlignmentFallback">
+      <IsDockAligned docking_station="{docking_station}"/>
+
+      <Sequence name="RecoverAndAlign">
+        <BackUp backup_dist="0.25" backup_speed="0.05"/>
+        <AlignToDock docking_station="{docking_station}"/>
+      </Sequence>
+    </Fallback>
+  </BehaviorTree>
+
+  <TreeNodesModel>
+    <Action ID="InitializeMission">
+      <input_port name="mission_id"/>
+    </Action>
+
+    <Action ID="FinalizeMission">
+      <input_port name="mission_id"/>
+    </Action>
+
+    <Action ID="ComputePathToPose">
+      <input_port name="goal"/>
+      <output_port name="path"/>
+      <input_port name="planner_id"/>
+    </Action>
+
+    <Action ID="FollowPath">
+      <input_port name="path"/>
+      <input_port name="controller_id"/>
+    </Action>
+
+    <Condition ID="IsDoorClosed">
+      <input_port name="door_id"/>
+    </Condition>
+
+    <Action ID="OpenDoor">
+      <input_port name="door_id"/>
+      <input_port name="timeout"/>
+    </Action>
+
+    <Action ID="NavigateThroughDoor">
+      <input_port name="door_id"/>
+      <input_port name="goal"/>
+    </Action>
+
+    <Action ID="CloseDoor">
+      <input_port name="door_id"/>
+    </Action>
+
+    <Action ID="ApproachDock">
+      <input_port name="docking_station"/>
+    </Action>
+
+    <Condition ID="IsDockAligned">
+      <input_port name="docking_station"/>
+    </Condition>
+
+    <Action ID="AlignToDock">
+      <input_port name="docking_station"/>
+    </Action>
+
+    <Action ID="DockRobot">
+      <input_port name="docking_station"/>
+    </Action>
+  </TreeNodesModel>
+</root>
