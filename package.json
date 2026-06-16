@@ -1,0 +1,56 @@
+{
+  "name": "vscode-nav2-bt-preview",
+  "displayName": "Nav2 BT Preview",
+  "description": "Simple VS Code previewer for ROS 2 Nav2 and BehaviorTree.CPP XML behavior trees.",
+  "version": "0.0.1",
+  "publisher": "dumperdg",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Visualization",
+    "Other"
+  ],
+  "activationEvents": [
+    "onCommand:nav2-bt-preview.openPreview"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "nav2-bt-preview.openPreview",
+        "title": "Nav2 BT Preview: Open Preview"
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "nav2-bt-preview.openPreview",
+          "when": "resourceExtname == .xml",
+          "group": "navigation"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "nav2-bt-preview.openPreview",
+          "when": "resourceExtname == .xml",
+          "group": "navigation"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.90.0",
+    "@vscode/vsce": "^3.2.2",
+    "typescript": "^5.4.0"
+  },
+  "dependencies": {
+    "fast-xml-parser": "^4.5.0"
+  }
+}
