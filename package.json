@@ -2,7 +2,7 @@
   "name": "vscode-nav2-bt-preview",
   "displayName": "Nav2 BT Preview",
   "description": "Simple VS Code previewer for ROS 2 Nav2 and BehaviorTree.CPP XML behavior trees.",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "publisher": "DavidG-Develop",
   "engines": {
     "vscode": "^1.90.0"
