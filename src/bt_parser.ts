@@ -51,6 +51,11 @@ export type InsertBehaviorTreeResult = {
   behaviorTreePath: number[];
 };
 
+export type DeleteXmlNodeResult = {
+  xmlText: string;
+  deletedPath: number[];
+};
+
 type InternalXmlNode = Omit<
   BtNode,
   "kind" | "children" | "definitionKnown" | "definition"
@@ -267,15 +272,48 @@ export function insertBehaviorTreeAfterPath(
   }
 
   const referenceTree = findNearestBehaviorTree(reference) ?? reference;
+  const documentRoot = getTopRootNode(referenceTree);
+
+  const treeIndent = getLineIndentAtOffset(
+    xmlText,
+    referenceTree.source.startOffset
+  );
+
+  if (documentRoot && documentRoot !== referenceTree && documentRoot.closeTag) {
+    const insertBeforeOffset = documentRoot.closeTag.startOffset;
+
+    const insertion = [
+      `${treeIndent}<BehaviorTree ID="${encodeXmlAttribute(behaviorTreeId, '"')}">`,
+      `${treeIndent}</BehaviorTree>`,
+      ""
+    ].join("\n");
+
+    const needsLeadingNewline =
+      insertBeforeOffset > 0 && xmlText[insertBeforeOffset - 1] !== "\n";
+
+    const finalInsertion = `${needsLeadingNewline ? "\n" : ""}${insertion}`;
+
+    const behaviorTreePath = [
+      ...documentRoot.source.path,
+      documentRoot.children.length
+    ];
+
+    return {
+      xmlText:
+        xmlText.slice(0, insertBeforeOffset) +
+        finalInsertion +
+        xmlText.slice(insertBeforeOffset),
+      behaviorTreePath
+    };
+  }
 
   const insertAfterOffset =
     referenceTree.closeTag?.endOffset ?? referenceTree.source.endOpenTagOffset;
 
-  const indent = getLineIndentAtOffset(xmlText, referenceTree.source.startOffset);
   const insertion = [
     "",
-    `${indent}<BehaviorTree ID="${encodeXmlAttribute(behaviorTreeId, '"')}">`,
-    `${indent}</BehaviorTree>`
+    `${treeIndent}<BehaviorTree ID="${encodeXmlAttribute(behaviorTreeId, '"')}">`,
+    `${treeIndent}</BehaviorTree>`
   ].join("\n");
 
   const behaviorTreePath = getInsertedRootSiblingPath(roots, referenceTree);
@@ -286,6 +324,78 @@ export function insertBehaviorTreeAfterPath(
       insertion +
       xmlText.slice(insertAfterOffset),
     behaviorTreePath
+  };
+}
+
+export function deleteXmlNodeByPath(
+  xmlText: string,
+  path: number[]
+): DeleteXmlNodeResult {
+  const roots = scanXml(xmlText);
+  const target = findNodeByPath(roots, path);
+
+  if (!target) {
+    throw new Error(`Could not find XML node at path [${path.join(", ")}].`);
+  }
+
+  const range = getNodeDeletionRange(xmlText, target);
+
+  return {
+    xmlText: xmlText.slice(0, range.start) + xmlText.slice(range.end),
+    deletedPath: target.source.path
+  };
+}
+
+export function deleteBehaviorTreeById(
+  xmlText: string,
+  behaviorTreeId: string
+): DeleteXmlNodeResult {
+  const roots = scanXml(xmlText);
+  const target = findBehaviorTreeById(roots, behaviorTreeId);
+
+  if (!target) {
+    throw new Error(`Could not find BehaviorTree with ID "${behaviorTreeId}".`);
+  }
+
+  const range = getNodeDeletionRange(xmlText, target);
+
+  return {
+    xmlText: xmlText.slice(0, range.start) + xmlText.slice(range.end),
+    deletedPath: target.source.path
+  };
+}
+
+function getNodeDeletionRange(
+  xmlText: string,
+  node: InternalXmlNode
+): { start: number; end: number } {
+  const nodeStart = node.source.startOffset;
+  const nodeEnd = node.closeTag?.endOffset ?? node.source.endOpenTagOffset;
+
+  const lineStart = xmlText.lastIndexOf("\n", Math.max(0, nodeStart - 1)) + 1;
+  const nextLineBreak = xmlText.indexOf("\n", nodeEnd);
+  const lineEnd = nextLineBreak >= 0 ? nextLineBreak : xmlText.length;
+
+  const beforeNodeOnLine = xmlText.slice(lineStart, nodeStart);
+  const afterNodeOnLine = xmlText.slice(nodeEnd, lineEnd);
+
+  if (/^[\t ]*$/.test(beforeNodeOnLine) && /^[\t ]*$/.test(afterNodeOnLine)) {
+    if (lineStart > 0) {
+      return {
+        start: lineStart - 1,
+        end: lineEnd
+      };
+    }
+
+    return {
+      start: lineStart,
+      end: nextLineBreak >= 0 ? lineEnd + 1 : lineEnd
+    };
+  }
+
+  return {
+    start: nodeStart,
+    end: nodeEnd
   };
 }
 
@@ -441,15 +551,17 @@ function collectPorts(node: InternalXmlNode): TreeNodePort[] {
 }
 
 function portTagToDirection(tag: string): TreeNodePortDirection | undefined {
-  if (tag === "input_port") {
+  const normalized = tag.toLowerCase();
+
+  if (normalized === "input_port" || normalized === "inputport") {
     return "input";
   }
 
-  if (tag === "output_port") {
+  if (normalized === "output_port" || normalized === "outputport") {
     return "output";
   }
 
-  if (tag === "inout_port") {
+  if (normalized === "inout_port" || normalized === "inoutport") {
     return "inout";
   }
 
@@ -544,14 +656,30 @@ function scanXml(xmlText: string): InternalXmlNode[] {
 
     if (xmlText.startsWith("</", openIndex)) {
       const closeIndex = xmlText.indexOf(">", openIndex + 2);
+      const closingTagText = xmlText.slice(
+        openIndex,
+        closeIndex < 0 ? xmlText.length : closeIndex + 1
+      );
+      const closingTagName = extractClosingTagName(closingTagText);
 
-      const closingNode = stack.pop();
+      if (closingTagName) {
+        for (let stackIndex = stack.length - 1; stackIndex >= 0; stackIndex -= 1) {
+          const candidate = stack[stackIndex];
 
-      if (closingNode) {
-        closingNode.closeTag = {
-          startOffset: openIndex,
-          endOffset: closeIndex < 0 ? xmlText.length : closeIndex + 1
-        };
+          if (candidate.tag !== closingTagName) {
+            continue;
+          }
+
+          candidate.closeTag = {
+            startOffset: openIndex,
+            endOffset: closeIndex < 0 ? xmlText.length : closeIndex + 1
+          };
+
+          stack.length = stackIndex;
+          break;
+        }
+      } else {
+        stack.pop();
       }
 
       index = closeIndex < 0 ? xmlText.length : closeIndex + 1;
@@ -622,6 +750,19 @@ function findNodeByPath(
   nodes: InternalXmlNode[],
   path: number[]
 ): InternalXmlNode | undefined {
+  const exactMatch = findNodeByExactPath(nodes, path);
+
+  if (exactMatch) {
+    return exactMatch;
+  }
+
+  return findNodeByBehaviorTreeForestPath(nodes, path);
+}
+
+function findNodeByExactPath(
+  nodes: InternalXmlNode[],
+  path: number[]
+): InternalXmlNode | undefined {
   let currentLevel = nodes;
   let currentNode: InternalXmlNode | undefined;
 
@@ -636,6 +777,34 @@ function findNodeByPath(
   }
 
   return currentNode;
+}
+
+function findNodeByBehaviorTreeForestPath(
+  nodes: InternalXmlNode[],
+  path: number[]
+): InternalXmlNode | undefined {
+  if (path.length === 0) {
+    return undefined;
+  }
+
+  const behaviorTrees: InternalXmlNode[] = [];
+
+  for (const root of nodes) {
+    collectBehaviorTrees(root, behaviorTrees);
+  }
+
+  const behaviorTreeRoot = behaviorTrees[path[0]];
+
+  if (!behaviorTreeRoot) {
+    return undefined;
+  }
+
+  const realXmlPath = [
+    ...behaviorTreeRoot.source.path,
+    ...path.slice(1)
+  ];
+
+  return findNodeByExactPath(nodes, realXmlPath);
 }
 
 function findOpenTagEnd(xmlText: string, startOffset: number): number {
@@ -667,6 +836,11 @@ function findOpenTagEnd(xmlText: string, startOffset: number): number {
 
 function extractTagName(openTag: string): string | undefined {
   const match = /^<\s*([^\s/>]+)/.exec(openTag);
+  return match?.[1];
+}
+
+function extractClosingTagName(closeTag: string): string | undefined {
+  const match = /^<\/\s*([^\s>]+)/.exec(closeTag);
   return match?.[1];
 }
 

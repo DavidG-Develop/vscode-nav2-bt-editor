@@ -42,6 +42,7 @@ let currentBounds = undefined;
 let currentLayoutRoots = [];
 
 initializeActiveRoot();
+attachGlobalKeyboardHandlers();
 
 function initializeActiveRoot() {
   const preferredRoot = findPreferredTopRoot(nodes);
@@ -56,11 +57,55 @@ function initializeActiveRoot() {
   }
 }
 
+function attachGlobalKeyboardHandlers() {
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "Delete" && event.key !== "Backspace") {
+      return;
+    }
+
+    if (isTextEditingElement(document.activeElement)) {
+      return;
+    }
+
+    const selectedNode = findNodeByPathInForest(nodes, selectedNodePath);
+
+    if (!selectedNode) {
+      return;
+    }
+
+    event.preventDefault();
+
+    requestDeleteNode(
+      selectedNode,
+      isSubTreeNode(selectedNode) &&
+        selectedNode.attributes?.ID &&
+        Boolean(findBehaviorTreeById(nodes, selectedNode.attributes.ID))
+    );
+  });
+}
+
+function isTextEditingElement(element) {
+  if (!element) {
+    return false;
+  }
+
+  const tagName = element.tagName?.toLowerCase();
+
+  return (
+    tagName === "input" ||
+    tagName === "textarea" ||
+    tagName === "select" ||
+    element.isContentEditable
+  );
+}
+
 function renderTree() {
   treeContainer.innerHTML = "";
 
   if (nodes.length === 0) {
     treeContainer.textContent = "No BehaviorTree nodes found.";
+    detailsContainer.classList.add("empty");
+    detailsContainer.textContent = "No BehaviorTree nodes found.";
     return;
   }
 
@@ -851,6 +896,7 @@ function renderDetails(node) {
     </div>
 
     ${renderAttributeSections(node, definition, extraAttributes)}
+    ${renderDeleteSection(node)}
     ${renderAddBehaviorTreeSection(node)}
     ${renderAddChildSection(node, childLimit)}
   `;
@@ -867,6 +913,7 @@ function renderDetails(node) {
   }
 
   attachAttributeHandlers(node);
+  attachDeleteHandlers(node);
   attachAddBehaviorTreeHandlers(node);
   attachAddChildHandlers(node);
 }
@@ -926,6 +973,37 @@ function renderAttributeSections(node, definition, extraAttributes) {
   }
 
   return sections.join("");
+}
+
+function renderDeleteSection(node) {
+  const targetId = isSubTreeNode(node) ? node.attributes?.ID : undefined;
+  const targetExists = targetId ? Boolean(findBehaviorTreeById(nodes, targetId)) : false;
+
+  if (isSubTreeNode(node)) {
+    return `
+      <h3>Delete</h3>
+      <div class="info-box">
+        This removes the SubTree reference. If the referenced BehaviorTree exists, it can be removed too.
+      </div>
+      <button id="delete-node-and-referenced-tree-button" class="attr-apply-button">
+        ${
+          targetExists
+            ? "Delete SubTree and referenced BehaviorTree"
+            : "Delete SubTree reference"
+        }
+      </button>
+    `;
+  }
+
+  return `
+    <h3>Delete</h3>
+    <div class="info-box">
+      You can also press Delete while the graph node is selected.
+    </div>
+    <button id="delete-node-button" class="attr-apply-button">
+      Delete selected node
+    </button>
+  `;
 }
 
 function renderAddBehaviorTreeSection(node) {
@@ -1198,6 +1276,52 @@ function attachAttributeHandlers(node) {
   }
 }
 
+function attachDeleteHandlers(node) {
+  const deleteButton = document.getElementById("delete-node-button");
+  const deleteWithTreeButton = document.getElementById(
+    "delete-node-and-referenced-tree-button"
+  );
+
+  if (deleteButton) {
+    deleteButton.addEventListener("click", () => {
+      requestDeleteNode(node, false);
+    });
+  }
+
+  if (deleteWithTreeButton) {
+    deleteWithTreeButton.addEventListener("click", () => {
+      requestDeleteNode(
+        node,
+        isSubTreeNode(node) &&
+          node.attributes?.ID &&
+          Boolean(findBehaviorTreeById(nodes, node.attributes.ID))
+      );
+    });
+  }
+}
+
+function requestDeleteNode(node, deleteReferencedBehaviorTree) {
+  const pathToDelete = node.source?.path;
+
+  if (!pathToDelete) {
+    return;
+  }
+
+  vscode.postMessage({
+    type: "deleteNode",
+    path: pathToDelete,
+    deleteReferencedBehaviorTree: Boolean(deleteReferencedBehaviorTree)
+  });
+
+  applyLocalNodeDelete(
+    pathToDelete,
+    Boolean(deleteReferencedBehaviorTree),
+    node
+  );
+
+  renderTree();
+}
+
 function attachAddBehaviorTreeHandlers(node) {
   const button = document.getElementById("add-behavior-tree-button");
   const input = document.getElementById("new-behavior-tree-id");
@@ -1389,12 +1513,6 @@ function attachAddChildHandlers(parentNode) {
 
     if (shouldCreateReferencedBehaviorTree) {
       applyLocalBehaviorTreeInsert(parentNode, subtreeId, false);
-
-      vscode.postMessage({
-        type: "addBehaviorTree",
-        referencePath: parentNode.source.path,
-        behaviorTreeId: subtreeId
-      });
     }
 
     selectedNodePath = newChild.source.path;
@@ -1517,6 +1635,65 @@ function applyLocalChildNodeInsert(parentNode, tagName, attributes, definition) 
   return newChild;
 }
 
+function applyLocalNodeDelete(pathToDelete, deleteReferencedBehaviorTree, nodeToDelete) {
+  const referencedId =
+    deleteReferencedBehaviorTree && isSubTreeNode(nodeToDelete)
+      ? nodeToDelete.attributes?.ID
+      : undefined;
+
+  removeNodeByPath(nodes, pathToDelete);
+
+  if (referencedId) {
+    removeBehaviorTreeById(nodes, referencedId);
+  }
+
+  refreshRootPaths();
+
+  const parentPath = pathToDelete.length > 1 ? pathToDelete.slice(0, -1) : undefined;
+  const nextSelectedNode =
+    findNodeByPathInForest(nodes, parentPath) ??
+    findNodeByPathInForest(nodes, activeRootPath) ??
+    findPreferredTopRoot(nodes);
+
+  selectedNodePath = nextSelectedNode?.source?.path;
+  selectedNodeId = nextSelectedNode?.id;
+  activeRootPath =
+    findRootContainingPath(nodes, selectedNodePath)?.source?.path ??
+    findPreferredTopRoot(nodes)?.source?.path;
+}
+
+function removeNodeByPath(roots, path) {
+  if (!path || path.length === 0) {
+    return false;
+  }
+
+  if (path.length === 1) {
+    roots.splice(path[0], 1);
+    return true;
+  }
+
+  const parentPath = path.slice(0, -1);
+  const childIndex = path[path.length - 1];
+  const parent = findNodeByPathInForest(roots, parentPath);
+
+  if (!parent || !Array.isArray(parent.children)) {
+    return false;
+  }
+
+  parent.children.splice(childIndex, 1);
+  return true;
+}
+
+function removeBehaviorTreeById(roots, behaviorTreeId) {
+  const index = roots.findIndex((node) => {
+    return node.tag === "BehaviorTree" && node.attributes?.ID === behaviorTreeId;
+  });
+
+  if (index >= 0) {
+    roots.splice(index, 1);
+  }
+}
+
 function applyLocalBehaviorTreeInsert(referenceNode, behaviorTreeId, makeActive) {
   const existing = findBehaviorTreeById(nodes, behaviorTreeId);
 
@@ -1629,19 +1806,43 @@ function findRootContainingPath(roots, path) {
     return undefined;
   }
 
-  for (const root of roots) {
-    if (pathsEqual(root.source?.path, [path[0]])) {
-      return root;
-    }
+  return roots.find((root) => {
+    return isPathPrefix(root.source?.path, path);
+  });
+}
+
+function isPathPrefix(prefix, path) {
+  if (!Array.isArray(prefix) || !Array.isArray(path)) {
+    return false;
   }
 
-  return undefined;
+  if (prefix.length > path.length) {
+    return false;
+  }
+
+  return prefix.every((value, index) => value === path[index]);
 }
 
 function refreshRootPaths() {
+  const wrapperPrefix = getBehaviorTreeWrapperPrefix();
+
   for (let i = 0; i < nodes.length; i += 1) {
-    updatePathRecursive(nodes[i], [i]);
+    const rootPath = wrapperPrefix
+      ? [...wrapperPrefix, i]
+      : [i];
+
+    updatePathRecursive(nodes[i], rootPath);
   }
+}
+
+function getBehaviorTreeWrapperPrefix() {
+  const firstPath = nodes[0]?.source?.path;
+
+  if (!Array.isArray(firstPath) || firstPath.length <= 1) {
+    return undefined;
+  }
+
+  return firstPath.slice(0, -1);
 }
 
 function updatePathRecursive(node, path) {

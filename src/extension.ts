@@ -1,5 +1,8 @@
 import * as vscode from "vscode";
 import {
+  BtNode,
+  deleteBehaviorTreeById,
+  deleteXmlNodeByPath,
   getTreeNodeDefinitionCatalog,
   insertBehaviorTreeAfterPath,
   insertXmlChildNodeByPath,
@@ -38,6 +41,11 @@ type WebviewMessage =
       type: "addBehaviorTree";
       referencePath: number[];
       behaviorTreeId: string;
+    }
+  | {
+      type: "deleteNode";
+      path: number[];
+      deleteReferencedBehaviorTree?: boolean;
     };
 
 type ImportedDefinitionQuickPickItem = vscode.QuickPickItem & {
@@ -231,6 +239,37 @@ export function activate(context: vscode.ExtensionContext): void {
               if (!saved) {
                 vscode.window.showWarningMessage(
                   "BehaviorTree was added, but the file could not be saved automatically."
+                );
+              }
+            }
+
+            return;
+          }
+
+          if (message.type === "deleteNode") {
+            suppressDocumentRefresh(2500);
+
+            const result = await deleteNode(targetDocument, message);
+
+            if (!result) {
+              suppressDocumentRefreshUntil = 0;
+              return;
+            }
+
+            selectedPath = result.nextSelectedPath;
+
+            const autoSaveEdits = getAutoSaveEditsSetting(targetDocument.uri);
+
+            if (autoSaveEdits) {
+              suppressDocumentRefresh(2500);
+
+              const saved = await targetDocument.save();
+
+              suppressDocumentRefresh(2500);
+
+              if (!saved) {
+                vscode.window.showWarningMessage(
+                  "XML node was deleted, but the file could not be saved automatically."
                 );
               }
             }
@@ -816,6 +855,65 @@ async function addBehaviorTree(
   };
 }
 
+async function deleteNode(
+  document: vscode.TextDocument,
+  message: Extract<WebviewMessage, { type: "deleteNode" }>
+): Promise<{ nextSelectedPath: number[] | undefined } | undefined> {
+  const xmlText = document.getText();
+  const parsedNodes = parseBehaviorTreeXml(xmlText);
+  const nodeToDelete = findParsedNodeByPath(parsedNodes, message.path);
+  const referencedBehaviorTreeId =
+    message.deleteReferencedBehaviorTree && nodeToDelete
+      ? getReferencedBehaviorTreeId(nodeToDelete.tag, nodeToDelete.attributes)
+      : undefined;
+
+  let updatedXml: string;
+
+  try {
+    const result = deleteXmlNodeByPath(xmlText, message.path);
+    updatedXml = result.xmlText;
+  } catch (error) {
+    const messageText = error instanceof Error ? error.message : String(error);
+    vscode.window.showErrorMessage(messageText);
+    return undefined;
+  }
+
+  if (referencedBehaviorTreeId) {
+    try {
+      updatedXml = deleteBehaviorTreeById(
+        updatedXml,
+        referencedBehaviorTreeId
+      ).xmlText;
+    } catch (error) {
+      const messageText = error instanceof Error ? error.message : String(error);
+
+      vscode.window.showWarningMessage(
+        `Selected node was deleted, but the referenced BehaviorTree could not be deleted: ${messageText}`
+      );
+    }
+  }
+
+  if (updatedXml === xmlText) {
+    return {
+      nextSelectedPath: getParentPath(message.path)
+    };
+  }
+
+  const success = await replaceFullDocument(
+    document,
+    updatedXml,
+    "Failed to delete XML node."
+  );
+
+  if (!success) {
+    return undefined;
+  }
+
+  return {
+    nextSelectedPath: getParentPath(message.path)
+  };
+}
+
 function insertBehaviorTreeAfterExistingReferencePath(
   xmlText: string,
   referencePath: number[],
@@ -884,6 +982,84 @@ function isAlreadyExistsError(error: unknown): boolean {
     error.message.startsWith("BehaviorTree with ID") &&
     error.message.endsWith("already exists.")
   );
+}
+
+function findParsedNodeByPath(
+  nodes: BtNode[],
+  path: number[]
+): BtNode | undefined {
+  const exact = findParsedNodeByExactPath(nodes, path);
+
+  if (exact) {
+    return exact;
+  }
+
+  if (path.length === 0) {
+    return undefined;
+  }
+
+  const behaviorTreeRoot = nodes[path[0]];
+
+  if (!behaviorTreeRoot) {
+    return undefined;
+  }
+
+  const realPath = [
+    ...behaviorTreeRoot.source.path,
+    ...path.slice(1)
+  ];
+
+  return findParsedNodeByExactPath(nodes, realPath);
+}
+
+function findParsedNodeByExactPath(
+  nodes: BtNode[],
+  path: number[]
+): BtNode | undefined {
+  for (const node of nodes) {
+    const result = findParsedNodeByExactPathRecursive(node, path);
+
+    if (result) {
+      return result;
+    }
+  }
+
+  return undefined;
+}
+
+function findParsedNodeByExactPathRecursive(
+  node: BtNode,
+  path: number[]
+): BtNode | undefined {
+  if (pathsEqual(node.source.path, path)) {
+    return node;
+  }
+
+  for (const child of node.children) {
+    const result = findParsedNodeByExactPathRecursive(child, path);
+
+    if (result) {
+      return result;
+    }
+  }
+
+  return undefined;
+}
+
+function pathsEqual(left: number[], right: number[]): boolean {
+  if (left.length !== right.length) {
+    return false;
+  }
+
+  return left.every((value, index) => value === right[index]);
+}
+
+function getParentPath(path: number[]): number[] | undefined {
+  if (path.length <= 1) {
+    return undefined;
+  }
+
+  return path.slice(0, -1);
 }
 
 function filterAttributesForWriting(

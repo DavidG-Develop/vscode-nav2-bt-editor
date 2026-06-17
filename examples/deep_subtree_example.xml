@@ -46,9 +46,13 @@
                  door_id="{door_id}"
                  _autoremap="true"/>
 
-        <NavigateThroughDoor door_id="{door_id}" goal="{goal}"/>
+        <NavigateThroughDoor door_id="{dsadsa}" goal="{meow}"/>
 
         <CloseDoor door_id="{door_id}"/>
+      
+        <CancelSpin/>
+      
+        <AlignToDock/>
       </Sequence>
     </Fallback>
   </BehaviorTree>
