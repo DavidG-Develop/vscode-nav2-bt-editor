@@ -1,6 +1,7 @@
 const vscode = acquireVsCodeApi();
 
 const nodes = window.initialBtNodes ?? [];
+const treeNodeDefinitions = window.initialTreeNodeDefinitions ?? [];
 const previewOptions = window.initialPreviewOptions ?? {};
 const openOnlyOneBehaviorTree =
   previewOptions.openOnlyOneBehaviorTree !== false;
@@ -11,6 +12,7 @@ const allowEmptyAttributes =
 
 let selectedNodePath = window.initialSelectedPath ?? undefined;
 let selectedNodeId = undefined;
+let localNodeCounter = 0;
 
 let activeRootPath = undefined;
 let rootNavigationStack = [];
@@ -409,6 +411,14 @@ function isSubTreeNode(node) {
   return node.tag === "SubTree" || node.tag === "SubTreePlus";
 }
 
+function isSubTreeTagName(tagName) {
+  return tagName === "SubTree" || tagName === "SubTreePlus";
+}
+
+function isSubTreeDefinition(definition) {
+  return definition.id === "SubTree" || definition.id === "SubTreePlus";
+}
+
 function getSubTreeExpansionKey(node) {
   if (!isSubTreeNode(node) || !Array.isArray(node.source?.path)) {
     return undefined;
@@ -776,12 +786,13 @@ function renderDetails(node) {
   const visibleAttributes = getVisibleAttributes(node);
   const knownPortNames = getKnownPortNames(node);
   const extraAttributes = visibleAttributes.filter(([key]) => !knownPortNames.has(key));
+  const childLimit = getChildLimitInfo(node);
 
   detailsContainer.classList.remove("empty");
 
   detailsContainer.innerHTML = `
     <p><strong>Type:</strong> ${escapeHtml(node.tag)}</p>
-    <p><strong>Category:</strong> ${escapeHtml(node.kind)}</p>
+    <p><strong>Category:</strong> ${escapeHtml(getDisplayCategory(node))}</p>
     ${
       node.name
         ? `<p><strong>Name:</strong> ${escapeHtml(node.name)}</p>`
@@ -792,6 +803,7 @@ function renderDetails(node) {
         ? `<p><strong>Definition:</strong> ${escapeHtml(definition.source)}</p>`
         : ""
     }
+    <p><strong>Children:</strong> ${escapeHtml(String(node.children?.length ?? 0))}${childLimit.max === Infinity ? "" : ` / ${escapeHtml(String(childLimit.max))}`}</p>
     ${
       !node.definitionKnown
         ? `
@@ -821,7 +833,7 @@ function renderDetails(node) {
     <div class="xml-section">
       <h3>XML</h3>
       ${
-        source
+        source && source.startOffset >= 0
           ? `
             <p class="source-location">
               Line ${source.line + 1}, column ${source.column + 1}
@@ -829,11 +841,18 @@ function renderDetails(node) {
             <pre class="xml-preview">${escapeHtml(source.startTag)}</pre>
             <button id="reveal-node-button">Reveal in XML</button>
           `
-          : `<p class="empty">No XML source information available.</p>`
+          : `
+            <p class="source-location">
+              New node inserted locally. Source location will be available after reopening or refreshing the preview.
+            </p>
+            <pre class="xml-preview">${escapeHtml(source?.startTag ?? "")}</pre>
+          `
       }
     </div>
 
     ${renderAttributeSections(node, definition, extraAttributes)}
+    ${renderAddBehaviorTreeSection(node)}
+    ${renderAddChildSection(node, childLimit)}
   `;
 
   const revealButton = document.getElementById("reveal-node-button");
@@ -848,6 +867,16 @@ function renderDetails(node) {
   }
 
   attachAttributeHandlers(node);
+  attachAddBehaviorTreeHandlers(node);
+  attachAddChildHandlers(node);
+}
+
+function getDisplayCategory(node) {
+  if (isSubTreeNode(node)) {
+    return "subtree";
+  }
+
+  return node.kind;
 }
 
 function renderAttributeSections(node, definition, extraAttributes) {
@@ -899,6 +928,170 @@ function renderAttributeSections(node, definition, extraAttributes) {
   return sections.join("");
 }
 
+function renderAddBehaviorTreeSection(node) {
+  if (!isSubTreeNode(node)) {
+    return "";
+  }
+
+  const targetId = node.attributes?.ID ?? "";
+  const targetExists = targetId ? Boolean(findBehaviorTreeById(nodes, targetId)) : false;
+
+  if (!targetId) {
+    return `
+      <h3>Add referenced BehaviorTree</h3>
+      <div class="info-box">
+        Set the SubTree ID first. The ID is used as the referenced BehaviorTree ID.
+      </div>
+    `;
+  }
+
+  if (targetExists) {
+    return `
+      <h3>Add referenced BehaviorTree</h3>
+      <div class="info-box">
+        Referenced BehaviorTree "${escapeHtml(targetId)}" already exists.
+      </div>
+    `;
+  }
+
+  return `
+    <h3>Add referenced BehaviorTree</h3>
+    <div class="info-box">
+      This will create a new top-level BehaviorTree with ID "${escapeHtml(targetId)}".
+    </div>
+    <input
+      id="new-behavior-tree-id"
+      class="attr-input"
+      value="${escapeHtml(targetId)}"
+      placeholder="BehaviorTree ID"
+    />
+    <button id="add-behavior-tree-button" class="attr-apply-button">
+      Add BehaviorTree
+    </button>
+  `;
+}
+
+function renderAddChildSection(node, childLimit) {
+  if (!childLimit.canAdd) {
+    return `
+      <h3>Add child node</h3>
+      <div class="info-box">
+        ${escapeHtml(childLimit.reason)}
+      </div>
+    `;
+  }
+
+  return `
+    <h3>Add child node</h3>
+    <div class="info-box">
+      ${escapeHtml(childLimit.reason)}
+    </div>
+
+    <label for="new-child-kind"><strong>Node category</strong></label>
+    <select id="new-child-kind" class="attr-input">
+      <option value="control">Control</option>
+      <option value="decorator">Decorator</option>
+      <option value="subtree">SubTree</option>
+      <option value="condition">Condition</option>
+      <option value="action">Action</option>
+      <option value="custom">Custom / unknown</option>
+    </select>
+
+    <label for="new-child-known-type"><strong>Known node type</strong></label>
+    <select id="new-child-known-type" class="attr-input" size="8"></select>
+
+    <label for="new-child-custom-type"><strong>Custom node tag</strong></label>
+    <input
+      id="new-child-custom-type"
+      class="attr-input"
+      placeholder="custom XML tag"
+      style="display: none;"
+    />
+
+    <div id="new-child-definition-preview"></div>
+
+    <button id="add-child-button" class="attr-apply-button">Add child</button>
+  `;
+}
+
+function getChildLimitInfo(node) {
+  const childCount = node.children?.length ?? 0;
+
+  if (node.tag === "BehaviorTree") {
+    return {
+      max: 1,
+      canAdd: childCount < 1,
+      reason:
+        childCount < 1
+          ? "BehaviorTree can have one root child."
+          : "BehaviorTree already has its single root child."
+    };
+  }
+
+  if (isSubTreeNode(node)) {
+    return {
+      max: 0,
+      canAdd: false,
+      reason: "SubTree nodes reference another BehaviorTree and do not have inline children."
+    };
+  }
+
+  if (node.kind === "decorator") {
+    return {
+      max: 1,
+      canAdd: childCount < 1,
+      reason:
+        childCount < 1
+          ? "Decorator nodes can have one child."
+          : "Decorator node already has its single child."
+    };
+  }
+
+  if (node.kind === "control") {
+    return {
+      max: Infinity,
+      canAdd: true,
+      reason: "Control nodes can have multiple children."
+    };
+  }
+
+  if (node.kind === "action") {
+    return {
+      max: 0,
+      canAdd: false,
+      reason: "Action nodes are leaf nodes and cannot have children."
+    };
+  }
+
+  if (node.kind === "condition") {
+    return {
+      max: 0,
+      canAdd: false,
+      reason: "Condition nodes are leaf nodes and cannot have children."
+    };
+  }
+
+  return {
+    max: 0,
+    canAdd: false,
+    reason: "This node type cannot have children."
+  };
+}
+
+function getDefinitionsByKind(kind) {
+  if (kind === "subtree") {
+    return treeNodeDefinitions
+      .filter((definition) => isSubTreeDefinition(definition))
+      .sort((left, right) => left.id.localeCompare(right.id));
+  }
+
+  return treeNodeDefinitions
+    .filter((definition) => definition.kind === kind)
+    .filter((definition) => definition.id !== "BehaviorTree")
+    .filter((definition) => !isSubTreeDefinition(definition))
+    .sort((left, right) => left.id.localeCompare(right.id));
+}
+
 function renderAttributeRow(name, value, direction) {
   return `
     <tr>
@@ -924,6 +1117,24 @@ function renderAttributeRow(name, value, direction) {
         >
           Apply
         </button>
+      </td>
+    </tr>
+  `;
+}
+
+function renderChildPortRow(port) {
+  return `
+    <tr>
+      <td class="attr-name">
+        ${escapeHtml(port.name)}
+        <div class="attr-port-direction">${escapeHtml(port.direction)}</div>
+      </td>
+      <td>
+        <input
+          class="attr-input new-child-port-input"
+          data-port-name="${escapeHtml(port.name)}"
+          placeholder="${allowEmptyAttributes ? "empty value allowed" : "empty value will be omitted"}"
+        />
       </td>
     </tr>
   `;
@@ -987,6 +1198,222 @@ function attachAttributeHandlers(node) {
   }
 }
 
+function attachAddBehaviorTreeHandlers(node) {
+  const button = document.getElementById("add-behavior-tree-button");
+  const input = document.getElementById("new-behavior-tree-id");
+
+  if (!button || !input) {
+    return;
+  }
+
+  button.addEventListener("click", () => {
+    const behaviorTreeId = input.value.trim();
+
+    if (!behaviorTreeId) {
+      return;
+    }
+
+    if (!isValidXmlName(behaviorTreeId)) {
+      input.setCustomValidity("Invalid XML ID.");
+      input.reportValidity();
+      return;
+    }
+
+    applyLocalBehaviorTreeInsert(node, behaviorTreeId, true);
+
+    vscode.postMessage({
+      type: "addBehaviorTree",
+      referencePath: node.source.path,
+      behaviorTreeId
+    });
+
+    renderTree();
+  });
+}
+
+function attachAddChildHandlers(parentNode) {
+  const kindSelect = document.getElementById("new-child-kind");
+  const knownTypeSelect = document.getElementById("new-child-known-type");
+  const customTypeInput = document.getElementById("new-child-custom-type");
+  const addButton = document.getElementById("add-child-button");
+  const definitionPreview = document.getElementById("new-child-definition-preview");
+
+  if (!kindSelect || !knownTypeSelect || !customTypeInput || !addButton || !definitionPreview) {
+    return;
+  }
+
+  function populateKnownTypeSelect() {
+    const kind = kindSelect.value;
+
+    knownTypeSelect.innerHTML = "";
+
+    if (kind === "custom") {
+      knownTypeSelect.style.display = "none";
+      customTypeInput.style.display = "block";
+      updateDefinitionPreview();
+      return;
+    }
+
+    knownTypeSelect.style.display = "block";
+    customTypeInput.style.display = "none";
+
+    const definitions = getDefinitionsByKind(kind);
+
+    for (const definition of definitions) {
+      const option = document.createElement("option");
+      option.value = definition.id;
+      option.textContent = definition.id;
+      knownTypeSelect.appendChild(option);
+    }
+
+    if (definitions.length > 0) {
+      knownTypeSelect.value = definitions[0].id;
+    }
+
+    updateDefinitionPreview();
+  }
+
+  function getSelectedTagName() {
+    if (kindSelect.value === "custom") {
+      return customTypeInput.value.trim();
+    }
+
+    return knownTypeSelect.value.trim();
+  }
+
+  function updateDefinitionPreview() {
+    const tagName = getSelectedTagName();
+
+    if (!tagName) {
+      definitionPreview.innerHTML = "";
+      return;
+    }
+
+    const definition = findDefinitionById(tagName);
+
+    if (!definition) {
+      definitionPreview.innerHTML = `
+        <div class="warning-box">
+          Unknown node type. It will be inserted as a custom XML node without predefined attributes.
+        </div>
+      `;
+      return;
+    }
+
+    if (definition.ports.length === 0) {
+      definitionPreview.innerHTML = `
+        <div class="info-box">
+          Known ${escapeHtml(getDefinitionDisplayCategory(definition))} node with no defined attributes.
+        </div>
+      `;
+      return;
+    }
+
+    definitionPreview.innerHTML = `
+      <h3>New child attributes</h3>
+      <table class="attr-table">
+        ${definition.ports.map((port) => renderChildPortRow(port)).join("")}
+      </table>
+    `;
+  }
+
+  kindSelect.addEventListener("change", populateKnownTypeSelect);
+  knownTypeSelect.addEventListener("change", updateDefinitionPreview);
+  customTypeInput.addEventListener("input", updateDefinitionPreview);
+
+  addButton.addEventListener("click", () => {
+    const childLimit = getChildLimitInfo(parentNode);
+
+    if (!childLimit.canAdd) {
+      definitionPreview.innerHTML = `
+        <div class="warning-box">
+          ${escapeHtml(childLimit.reason)}
+        </div>
+      `;
+      return;
+    }
+
+    const tagName = getSelectedTagName();
+
+    if (!tagName) {
+      return;
+    }
+
+    if (!isValidXmlName(tagName)) {
+      definitionPreview.innerHTML = `
+        <div class="warning-box">
+          Invalid XML tag name.
+        </div>
+      `;
+      return;
+    }
+
+    const definition = findDefinitionById(tagName);
+    const attributes = {};
+
+    for (const input of document.querySelectorAll(".new-child-port-input")) {
+      const portName = input.getAttribute("data-port-name");
+
+      if (!portName) {
+        continue;
+      }
+
+      const value = input.value;
+
+      if (value.trim().length === 0 && !allowEmptyAttributes) {
+        continue;
+      }
+
+      attributes[portName] = value;
+    }
+
+    const newChild = applyLocalChildNodeInsert(
+      parentNode,
+      tagName,
+      attributes,
+      definition
+    );
+
+    vscode.postMessage({
+      type: "addChildNode",
+      parentPath: parentNode.source.path,
+      tagName,
+      attributes
+    });
+
+    const subtreeId = attributes.ID?.trim();
+    const shouldCreateReferencedBehaviorTree =
+      isSubTreeTagName(tagName) &&
+      subtreeId &&
+      !findBehaviorTreeById(nodes, subtreeId);
+
+    if (shouldCreateReferencedBehaviorTree) {
+      applyLocalBehaviorTreeInsert(parentNode, subtreeId, false);
+
+      vscode.postMessage({
+        type: "addBehaviorTree",
+        referencePath: parentNode.source.path,
+        behaviorTreeId: subtreeId
+      });
+    }
+
+    selectedNodePath = newChild.source.path;
+    selectedNodeId = newChild.id;
+
+    renderTree();
+  });
+
+  populateKnownTypeSelect();
+}
+
+function getDefinitionDisplayCategory(definition) {
+  if (isSubTreeDefinition(definition)) {
+    return "subtree";
+  }
+
+  return definition.kind;
+}
+
 function applyLocalAttributeUpdate(node, attrName, attrValue) {
   const shouldRemoveAttribute =
     attrValue.trim().length === 0 && !allowEmptyAttributes;
@@ -1041,6 +1468,190 @@ function applyLocalAttributeUpdate(node, attrName, attrValue) {
 
   renderDetails(node);
   renderTree();
+}
+
+function applyLocalChildNodeInsert(parentNode, tagName, attributes, definition) {
+  const matchingParents = findAllNodesByPath(nodes, parentNode.source?.path);
+  let newChild = undefined;
+
+  for (const matchingParent of matchingParents) {
+    const childPath = [
+      ...matchingParent.source.path,
+      matchingParent.children.length
+    ];
+
+    const childNode = createLocalChildNode(
+      tagName,
+      attributes,
+      definition,
+      childPath
+    );
+
+    matchingParent.children.push(childNode);
+
+    if (matchingParent.source?.startTag) {
+      matchingParent.source.startTag = matchingParent.source.startTag.replace(
+        /\/\s*>$/,
+        ">"
+      );
+    }
+
+    if (!newChild) {
+      newChild = childNode;
+    }
+  }
+
+  if (!newChild) {
+    const childPath = [...parentNode.source.path, parentNode.children.length];
+
+    newChild = createLocalChildNode(
+      tagName,
+      attributes,
+      definition,
+      childPath
+    );
+
+    parentNode.children.push(newChild);
+  }
+
+  return newChild;
+}
+
+function applyLocalBehaviorTreeInsert(referenceNode, behaviorTreeId, makeActive) {
+  const existing = findBehaviorTreeById(nodes, behaviorTreeId);
+
+  if (existing) {
+    if (makeActive) {
+      selectedNodePath = existing.source?.path;
+      selectedNodeId = existing.id;
+      activeRootPath = existing.source?.path;
+    }
+
+    return existing;
+  }
+
+  const referenceRoot = findRootContainingPath(nodes, referenceNode.source?.path);
+  const rootIndex = referenceRoot ? nodes.indexOf(referenceRoot) : nodes.length - 1;
+  const insertIndex = rootIndex >= 0 ? rootIndex + 1 : nodes.length;
+
+  const newTree = createLocalBehaviorTreeNode(behaviorTreeId, [insertIndex]);
+
+  nodes.splice(insertIndex, 0, newTree);
+
+  refreshRootPaths();
+
+  if (makeActive) {
+    selectedNodePath = newTree.source.path;
+    selectedNodeId = newTree.id;
+    activeRootPath = newTree.source.path;
+  }
+
+  return newTree;
+}
+
+function createLocalChildNode(tagName, attributes, definition, path) {
+  localNodeCounter += 1;
+
+  return {
+    id: `local-node-${localNodeCounter}`,
+    tag: tagName,
+    kind: definition?.kind ?? "action",
+    name: attributes.name ?? attributes.ID,
+    attributes: {
+      ...attributes
+    },
+    children: [],
+    source: {
+      path,
+      startOffset: -1,
+      endOpenTagOffset: -1,
+      line: -1,
+      column: -1,
+      startTag: buildSelfClosingStartTag(tagName, attributes)
+    },
+    definitionKnown: Boolean(definition),
+    definition
+  };
+}
+
+function createLocalBehaviorTreeNode(behaviorTreeId, path) {
+  localNodeCounter += 1;
+
+  const definition = findDefinitionById("BehaviorTree") ?? {
+    id: "BehaviorTree",
+    kind: "control",
+    ports: [{ name: "ID", direction: "input" }],
+    source: "builtin"
+  };
+
+  return {
+    id: `local-node-${localNodeCounter}`,
+    tag: "BehaviorTree",
+    kind: "control",
+    name: behaviorTreeId,
+    attributes: {
+      ID: behaviorTreeId
+    },
+    children: [],
+    source: {
+      path,
+      startOffset: -1,
+      endOpenTagOffset: -1,
+      line: -1,
+      column: -1,
+      startTag: `<BehaviorTree ID="${encodeXmlAttribute(behaviorTreeId, '"')}">`
+    },
+    definitionKnown: true,
+    definition
+  };
+}
+
+function buildSelfClosingStartTag(tagName, attributes) {
+  const serializedAttributes = Object.entries(attributes)
+    .map(([name, value]) => {
+      return ` ${name}="${encodeXmlAttribute(value, '"')}"`;
+    })
+    .join("");
+
+  return `<${tagName}${serializedAttributes}/>`;
+}
+
+function findDefinitionById(id) {
+  return treeNodeDefinitions.find((definition) => definition.id === id);
+}
+
+function isValidXmlName(value) {
+  return /^[A-Za-z_][A-Za-z0-9_.:-]*$/.test(value);
+}
+
+function findRootContainingPath(roots, path) {
+  if (!path) {
+    return undefined;
+  }
+
+  for (const root of roots) {
+    if (pathsEqual(root.source?.path, [path[0]])) {
+      return root;
+    }
+  }
+
+  return undefined;
+}
+
+function refreshRootPaths() {
+  for (let i = 0; i < nodes.length; i += 1) {
+    updatePathRecursive(nodes[i], [i]);
+  }
+}
+
+function updatePathRecursive(node, path) {
+  if (node.source) {
+    node.source.path = path;
+  }
+
+  for (let i = 0; i < (node.children ?? []).length; i += 1) {
+    updatePathRecursive(node.children[i], [...path, i]);
+  }
 }
 
 function findAllNodesByPath(roots, path) {

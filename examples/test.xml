@@ -1,0 +1,33 @@
+<root main_tree_to_execute="MainTree">
+  <BehaviorTree ID="MainTree">
+  
+    <Sequence name="FirstSequence">
+      <AlignToDock name="Align" docking_station="1st_dock"/>
+    
+      <BackUp name="backup" backup_dist="0.2"/>
+    
+      <Delay>
+        <IsDoorClosed/>
+      </Delay>
+    
+      <Fallback>
+        <ArePosesNear/>
+      
+        <Inverter>
+          <NavigateThroughPoses/>
+        </Inverter>
+
+      
+        <SubTree ID="subtree" _autoremap="true"/>
+      </Fallback>
+    </Sequence>
+  </BehaviorTree>
+  <BehaviorTree ID="subtree">
+  
+    <Fallback>
+      <BackUp/>
+    
+      <FinalizeMission/>
+    </Fallback>
+  </BehaviorTree>
+</root>

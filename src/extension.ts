@@ -1,5 +1,8 @@
 import * as vscode from "vscode";
 import {
+  getTreeNodeDefinitionCatalog,
+  insertBehaviorTreeAfterPath,
+  insertXmlChildNodeByPath,
   parseBehaviorTreeXml,
   parseTreeNodeDefinitionsFromXml,
   TreeNodeDefinition,
@@ -24,6 +27,17 @@ type WebviewMessage =
       path: number[];
       attrName: string;
       attrValue: string;
+    }
+  | {
+      type: "addChildNode";
+      parentPath: number[];
+      tagName: string;
+      attributes: Record<string, string>;
+    }
+  | {
+      type: "addBehaviorTree";
+      referencePath: number[];
+      behaviorTreeId: string;
     };
 
 type ImportedDefinitionQuickPickItem = vscode.QuickPickItem & {
@@ -73,9 +87,11 @@ export function activate(context: vscode.ExtensionContext): void {
       function updatePreview(): void {
         try {
           const xmlText = targetDocument.getText();
-          const nodes = parseBehaviorTreeXml(
+          const importedDefinitions = getImportedTreeNodeDefinitions(context);
+          const nodes = parseBehaviorTreeXml(xmlText, importedDefinitions);
+          const treeNodeDefinitions = getTreeNodeDefinitionCatalog(
             xmlText,
-            getImportedTreeNodeDefinitions(context)
+            importedDefinitions
           );
 
           panel.webview.html = getWebviewHtml(
@@ -83,7 +99,8 @@ export function activate(context: vscode.ExtensionContext): void {
             context.extensionUri,
             nodes,
             selectedPath,
-            getPreviewOptions(targetDocument.uri)
+            getPreviewOptions(targetDocument.uri),
+            treeNodeDefinitions
           );
         } catch (error) {
           const message =
@@ -152,6 +169,68 @@ export function activate(context: vscode.ExtensionContext): void {
               if (!saved) {
                 vscode.window.showWarningMessage(
                   "XML attribute was updated, but the file could not be saved automatically."
+                );
+              }
+            }
+
+            return;
+          }
+
+          if (message.type === "addChildNode") {
+            suppressDocumentRefresh(2500);
+
+            const result = await addChildNode(targetDocument, message);
+
+            if (!result) {
+              suppressDocumentRefreshUntil = 0;
+              return;
+            }
+
+            selectedPath = result.childPath;
+
+            const autoSaveEdits = getAutoSaveEditsSetting(targetDocument.uri);
+
+            if (autoSaveEdits) {
+              suppressDocumentRefresh(2500);
+
+              const saved = await targetDocument.save();
+
+              suppressDocumentRefresh(2500);
+
+              if (!saved) {
+                vscode.window.showWarningMessage(
+                  "XML child node was added, but the file could not be saved automatically."
+                );
+              }
+            }
+
+            return;
+          }
+
+          if (message.type === "addBehaviorTree") {
+            suppressDocumentRefresh(2500);
+
+            const result = await addBehaviorTree(targetDocument, message);
+
+            if (!result) {
+              suppressDocumentRefreshUntil = 0;
+              return;
+            }
+
+            selectedPath = result.behaviorTreePath;
+
+            const autoSaveEdits = getAutoSaveEditsSetting(targetDocument.uri);
+
+            if (autoSaveEdits) {
+              suppressDocumentRefresh(2500);
+
+              const saved = await targetDocument.save();
+
+              suppressDocumentRefresh(2500);
+
+              if (!saved) {
+                vscode.window.showWarningMessage(
+                  "BehaviorTree was added, but the file could not be saved automatically."
                 );
               }
             }
@@ -382,8 +461,8 @@ async function removeImportedTreeNodeDefinitions(
   previewRefreshers: Set<() => void>
 ): Promise<void> {
   const existingDefinitions = getImportedTreeNodeDefinitions(context);
-  const entries = Object.entries(existingDefinitions).sort(([leftId], [rightId]) =>
-    leftId.localeCompare(rightId)
+  const entries = Object.entries(existingDefinitions).sort(
+    ([leftId], [rightId]) => leftId.localeCompare(rightId)
   );
 
   if (entries.length === 0) {
@@ -556,6 +635,13 @@ async function revealNode(
   document: vscode.TextDocument,
   startOffset: number
 ): Promise<void> {
+  if (startOffset < 0) {
+    vscode.window.showInformationMessage(
+      "This node has not been reparsed yet, so no source location is available."
+    );
+    return;
+  }
+
   const editor = await vscode.window.showTextDocument(
     document,
     vscode.ViewColumn.One
@@ -581,16 +667,248 @@ async function updateAttribute(
       ? undefined
       : message.attrValue;
 
-  const updatedXml = updateXmlAttributeByPath(
-    xmlText,
-    message.path,
-    message.attrName,
-    attributeValue
-  );
+  let updatedXml: string;
+
+  try {
+    updatedXml = updateXmlAttributeByPath(
+      xmlText,
+      message.path,
+      message.attrName,
+      attributeValue
+    );
+  } catch (error) {
+    const messageText = error instanceof Error ? error.message : String(error);
+    vscode.window.showErrorMessage(messageText);
+    return false;
+  }
 
   if (updatedXml === xmlText) {
     return true;
   }
+
+  return replaceFullDocument(
+    document,
+    updatedXml,
+    "Failed to update XML attribute."
+  );
+}
+
+async function addChildNode(
+  document: vscode.TextDocument,
+  message: Extract<WebviewMessage, { type: "addChildNode" }>
+): Promise<{ childPath: number[] } | undefined> {
+  const xmlText = document.getText();
+  const allowEmptyAttributes = getAllowEmptyAttributesSetting(document.uri);
+
+  const attributes = filterAttributesForWriting(
+    message.attributes,
+    allowEmptyAttributes
+  );
+
+  let childResult;
+
+  try {
+    childResult = insertXmlChildNodeByPath(
+      xmlText,
+      message.parentPath,
+      message.tagName,
+      attributes
+    );
+  } catch (error) {
+    const messageText = error instanceof Error ? error.message : String(error);
+    vscode.window.showErrorMessage(messageText);
+    return undefined;
+  }
+
+  let updatedXml = childResult.xmlText;
+
+  const referencedBehaviorTreeId = getReferencedBehaviorTreeId(
+    message.tagName,
+    attributes
+  );
+
+  if (referencedBehaviorTreeId) {
+    try {
+      const behaviorTreeResult = insertBehaviorTreeAfterExistingReferencePath(
+        updatedXml,
+        message.parentPath,
+        referencedBehaviorTreeId
+      );
+
+      updatedXml = behaviorTreeResult.xmlText;
+    } catch (error) {
+      if (!isAlreadyExistsError(error)) {
+        const messageText =
+          error instanceof Error ? error.message : String(error);
+
+        vscode.window.showWarningMessage(
+          `SubTree node was added, but its referenced BehaviorTree could not be created automatically: ${messageText}`
+        );
+      }
+    }
+  }
+
+  if (updatedXml === xmlText) {
+    return {
+      childPath: childResult.childPath
+    };
+  }
+
+  const success = await replaceFullDocument(
+    document,
+    updatedXml,
+    "Failed to add XML child node."
+  );
+
+  if (!success) {
+    return undefined;
+  }
+
+  return {
+    childPath: childResult.childPath
+  };
+}
+
+async function addBehaviorTree(
+  document: vscode.TextDocument,
+  message: Extract<WebviewMessage, { type: "addBehaviorTree" }>
+): Promise<{ behaviorTreePath: number[] } | undefined> {
+  const xmlText = document.getText();
+
+  let result;
+
+  try {
+    result = insertBehaviorTreeAfterExistingReferencePath(
+      xmlText,
+      message.referencePath,
+      message.behaviorTreeId
+    );
+  } catch (error) {
+    if (isAlreadyExistsError(error)) {
+      return {
+        behaviorTreePath: message.referencePath
+      };
+    }
+
+    const messageText = error instanceof Error ? error.message : String(error);
+    vscode.window.showErrorMessage(messageText);
+    return undefined;
+  }
+
+  if (result.xmlText === xmlText) {
+    return {
+      behaviorTreePath: result.behaviorTreePath
+    };
+  }
+
+  const success = await replaceFullDocument(
+    document,
+    result.xmlText,
+    "Failed to add BehaviorTree."
+  );
+
+  if (!success) {
+    return undefined;
+  }
+
+  return {
+    behaviorTreePath: result.behaviorTreePath
+  };
+}
+
+function insertBehaviorTreeAfterExistingReferencePath(
+  xmlText: string,
+  referencePath: number[],
+  behaviorTreeId: string
+): ReturnType<typeof insertBehaviorTreeAfterPath> {
+  let lastError: unknown;
+
+  for (let length = referencePath.length; length >= 1; length -= 1) {
+    const candidatePath = referencePath.slice(0, length);
+
+    try {
+      return insertBehaviorTreeAfterPath(
+        xmlText,
+        candidatePath,
+        behaviorTreeId
+      );
+    } catch (error) {
+      lastError = error;
+
+      if (isMissingReferenceError(error)) {
+        continue;
+      }
+
+      throw error;
+    }
+  }
+
+  throw lastError instanceof Error
+    ? lastError
+    : new Error(
+        `Could not find reference XML node at path [${referencePath.join(", ")}].`
+      );
+}
+
+function getReferencedBehaviorTreeId(
+  tagName: string,
+  attributes: Record<string, string>
+): string | undefined {
+  if (!isSubTreeTagName(tagName)) {
+    return undefined;
+  }
+
+  const id = attributes["ID"]?.trim();
+
+  if (!id) {
+    return undefined;
+  }
+
+  return id;
+}
+
+function isSubTreeTagName(tagName: string): boolean {
+  return tagName === "SubTree" || tagName === "SubTreePlus";
+}
+
+function isMissingReferenceError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    error.message.startsWith("Could not find reference XML node at path")
+  );
+}
+
+function isAlreadyExistsError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    error.message.startsWith("BehaviorTree with ID") &&
+    error.message.endsWith("already exists.")
+  );
+}
+
+function filterAttributesForWriting(
+  attributes: Record<string, string>,
+  allowEmptyAttributes: boolean
+): Record<string, string> {
+  const filtered: Record<string, string> = {};
+
+  for (const [key, value] of Object.entries(attributes)) {
+    if (value.trim().length === 0 && !allowEmptyAttributes) {
+      continue;
+    }
+
+    filtered[key] = value;
+  }
+
+  return filtered;
+}
+
+async function replaceFullDocument(
+  document: vscode.TextDocument,
+  updatedXml: string,
+  errorMessage: string
+): Promise<boolean> {
+  const xmlText = document.getText();
 
   const fullRange = new vscode.Range(
     document.positionAt(0),
@@ -603,7 +921,7 @@ async function updateAttribute(
   const success = await vscode.workspace.applyEdit(edit);
 
   if (!success) {
-    vscode.window.showErrorMessage("Failed to update XML attribute.");
+    vscode.window.showErrorMessage(errorMessage);
     return false;
   }
 

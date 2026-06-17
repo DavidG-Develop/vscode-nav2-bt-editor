@@ -41,6 +41,16 @@ export type BtNode = {
   definition?: TreeNodeDefinition;
 };
 
+export type InsertXmlChildNodeResult = {
+  xmlText: string;
+  childPath: number[];
+};
+
+export type InsertBehaviorTreeResult = {
+  xmlText: string;
+  behaviorTreePath: number[];
+};
+
 type InternalXmlNode = Omit<
   BtNode,
   "kind" | "children" | "definitionKnown" | "definition"
@@ -48,6 +58,10 @@ type InternalXmlNode = Omit<
   kind?: BtNodeKind;
   parent?: InternalXmlNode;
   children: InternalXmlNode[];
+  closeTag?: {
+    startOffset: number;
+    endOffset: number;
+  };
 };
 
 type TreeNodeModelCatalog = Map<string, TreeNodeDefinition>;
@@ -118,6 +132,18 @@ export function parseBehaviorTreeXml(
   return outputRoots.map((node) => stripInternalFields(node, modelCatalog));
 }
 
+export function getTreeNodeDefinitionCatalog(
+  xmlText: string,
+  externalDefinitions: TreeNodeDefinitionMap = {}
+): TreeNodeDefinition[] {
+  const roots = scanXml(xmlText);
+  const modelCatalog = buildTreeNodesModelCatalog(roots, externalDefinitions);
+
+  return Array.from(modelCatalog.values()).sort((left, right) =>
+    left.id.localeCompare(right.id)
+  );
+}
+
 export function parseTreeNodeDefinitionsFromXml(
   xmlText: string,
   source: TreeNodeDefinitionSource = "xml"
@@ -155,6 +181,186 @@ export function updateXmlAttributeByPath(
       : setAttributeInOpenTag(openTag, attributeName, attributeValue);
 
   return xmlText.slice(0, start) + updatedOpenTag + xmlText.slice(end);
+}
+
+export function insertXmlChildNodeByPath(
+  xmlText: string,
+  parentPath: number[],
+  childTagName: string,
+  attributes: Record<string, string>
+): InsertXmlChildNodeResult {
+  validateXmlName(childTagName, "node tag");
+
+  for (const attributeName of Object.keys(attributes)) {
+    validateXmlName(attributeName, "attribute name");
+  }
+
+  const roots = scanXml(xmlText);
+  const parent = findNodeByPath(roots, parentPath);
+
+  if (!parent) {
+    throw new Error(
+      `Could not find XML parent node at path [${parentPath.join(", ")}].`
+    );
+  }
+
+  const childPath = [...parent.source.path, parent.children.length];
+  const parentIndent = getLineIndentAtOffset(xmlText, parent.source.startOffset);
+  const childIndent = `${parentIndent}  `;
+  const childXml = buildSelfClosingTag(childTagName, attributes);
+
+  const parentOpenTag = xmlText.slice(
+    parent.source.startOffset,
+    parent.source.endOpenTagOffset
+  );
+
+  if (isSelfClosingOpenTag(parentOpenTag)) {
+    const expandedParentOpenTag = parentOpenTag.replace(/\/\s*>$/, ">");
+    const replacement = [
+      expandedParentOpenTag,
+      `\n${childIndent}${childXml}`,
+      `\n${parentIndent}</${parent.tag}>`
+    ].join("");
+
+    return {
+      xmlText:
+        xmlText.slice(0, parent.source.startOffset) +
+        replacement +
+        xmlText.slice(parent.source.endOpenTagOffset),
+      childPath
+    };
+  }
+
+  if (!parent.closeTag) {
+    throw new Error(`Could not find closing tag for <${parent.tag}>.`);
+  }
+
+  const insertion = `\n${childIndent}${childXml}\n${parentIndent}`;
+
+  return {
+    xmlText:
+      xmlText.slice(0, parent.closeTag.startOffset) +
+      insertion +
+      xmlText.slice(parent.closeTag.startOffset),
+    childPath
+  };
+}
+
+export function insertBehaviorTreeAfterPath(
+  xmlText: string,
+  referencePath: number[],
+  behaviorTreeId: string
+): InsertBehaviorTreeResult {
+  validateXmlName(behaviorTreeId, "BehaviorTree ID");
+
+  const roots = scanXml(xmlText);
+  const reference = findNodeByPath(roots, referencePath);
+
+  if (!reference) {
+    throw new Error(
+      `Could not find reference XML node at path [${referencePath.join(", ")}].`
+    );
+  }
+
+  if (findBehaviorTreeById(roots, behaviorTreeId)) {
+    throw new Error(`BehaviorTree with ID "${behaviorTreeId}" already exists.`);
+  }
+
+  const referenceTree = findNearestBehaviorTree(reference) ?? reference;
+
+  const insertAfterOffset =
+    referenceTree.closeTag?.endOffset ?? referenceTree.source.endOpenTagOffset;
+
+  const indent = getLineIndentAtOffset(xmlText, referenceTree.source.startOffset);
+  const insertion = [
+    "",
+    `${indent}<BehaviorTree ID="${encodeXmlAttribute(behaviorTreeId, '"')}">`,
+    `${indent}</BehaviorTree>`
+  ].join("\n");
+
+  const behaviorTreePath = getInsertedRootSiblingPath(roots, referenceTree);
+
+  return {
+    xmlText:
+      xmlText.slice(0, insertAfterOffset) +
+      insertion +
+      xmlText.slice(insertAfterOffset),
+    behaviorTreePath
+  };
+}
+
+function getInsertedRootSiblingPath(
+  roots: InternalXmlNode[],
+  referenceTree: InternalXmlNode
+): number[] {
+  const topRoot = getTopRootNode(referenceTree);
+  const rootIndex = roots.indexOf(topRoot);
+
+  if (rootIndex < 0) {
+    return [roots.length];
+  }
+
+  return [rootIndex + 1];
+}
+
+function getTopRootNode(node: InternalXmlNode): InternalXmlNode {
+  let current = node;
+
+  while (current.parent) {
+    current = current.parent;
+  }
+
+  return current;
+}
+
+function findNearestBehaviorTree(
+  node: InternalXmlNode
+): InternalXmlNode | undefined {
+  let current: InternalXmlNode | undefined = node;
+
+  while (current) {
+    if (current.tag === "BehaviorTree") {
+      return current;
+    }
+
+    current = current.parent;
+  }
+
+  return undefined;
+}
+
+function findBehaviorTreeById(
+  roots: InternalXmlNode[],
+  id: string
+): InternalXmlNode | undefined {
+  for (const root of roots) {
+    const result = findBehaviorTreeByIdRecursive(root, id);
+
+    if (result) {
+      return result;
+    }
+  }
+
+  return undefined;
+}
+
+function findBehaviorTreeByIdRecursive(
+  node: InternalXmlNode,
+  id: string
+): InternalXmlNode | undefined {
+  if (node.tag === "BehaviorTree" && node.attributes["ID"] === id) {
+    return node;
+  }
+
+  for (const child of node.children) {
+    const result = findBehaviorTreeByIdRecursive(child, id);
+
+    if (result) {
+      return result;
+    }
+  }
+
+  return undefined;
 }
 
 function buildTreeNodesModelCatalog(
@@ -339,8 +545,13 @@ function scanXml(xmlText: string): InternalXmlNode[] {
     if (xmlText.startsWith("</", openIndex)) {
       const closeIndex = xmlText.indexOf(">", openIndex + 2);
 
-      if (stack.length > 0) {
-        stack.pop();
+      const closingNode = stack.pop();
+
+      if (closingNode) {
+        closingNode.closeTag = {
+          startOffset: openIndex,
+          endOffset: closeIndex < 0 ? xmlText.length : closeIndex + 1
+        };
       }
 
       index = closeIndex < 0 ? xmlText.length : closeIndex + 1;
@@ -470,6 +681,33 @@ function extractAttributes(openTag: string): Record<string, string> {
   }
 
   return attributes;
+}
+
+function buildSelfClosingTag(
+  tagName: string,
+  attributes: Record<string, string>
+): string {
+  const serializedAttributes = Object.entries(attributes)
+    .map(([name, value]) => {
+      return ` ${name}="${encodeXmlAttribute(value, '"')}"`;
+    })
+    .join("");
+
+  return `<${tagName}${serializedAttributes}/>`;
+}
+
+function validateXmlName(value: string, label: string): void {
+  if (!/^[A-Za-z_][A-Za-z0-9_.:-]*$/.test(value)) {
+    throw new Error(`Invalid XML ${label}: ${value}`);
+  }
+}
+
+function getLineIndentAtOffset(text: string, offset: number): string {
+  const lineStart = text.lastIndexOf("\n", Math.max(0, offset - 1)) + 1;
+  const linePrefix = text.slice(lineStart, offset);
+  const match = /^[\t ]*/.exec(linePrefix);
+
+  return match?.[0] ?? "";
 }
 
 function isSelfClosingOpenTag(openTag: string): boolean {
