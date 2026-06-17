@@ -15,8 +15,12 @@
     "onCommand:nav2-bt-preview.openPreview",
     "onCommand:nav2-bt-preview.importTreeNodesModel",
     "onCommand:nav2-bt-preview.importTreeNodesModelFromUrl",
+    "onCommand:nav2-bt-preview.importBehaviorTree",
+    "onCommand:nav2-bt-preview.importBehaviorTreeFromUrl",
     "onCommand:nav2-bt-preview.removeImportedTreeNodeDefinition",
-    "onCommand:nav2-bt-preview.clearImportedTreeNodesModel"
+    "onCommand:nav2-bt-preview.removeImportedBehaviorTree",
+    "onCommand:nav2-bt-preview.clearImportedTreeNodesModel",
+    "onCommand:nav2-bt-preview.clearImportedBehaviorTrees"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -34,12 +38,28 @@
         "title": "Nav2 BT Preview: Import TreeNodesModel XML from URL"
       },
       {
+        "command": "nav2-bt-preview.importBehaviorTree",
+        "title": "Nav2 BT Preview: Import BehaviorTree XML as SubTree"
+      },
+      {
+        "command": "nav2-bt-preview.importBehaviorTreeFromUrl",
+        "title": "Nav2 BT Preview: Import BehaviorTree XML as SubTree from URL"
+      },
+      {
         "command": "nav2-bt-preview.removeImportedTreeNodeDefinition",
         "title": "Nav2 BT Preview: Remove Imported TreeNode Definition"
       },
       {
+        "command": "nav2-bt-preview.removeImportedBehaviorTree",
+        "title": "Nav2 BT Preview: Remove Imported BehaviorTree SubTree"
+      },
+      {
         "command": "nav2-bt-preview.clearImportedTreeNodesModel",
         "title": "Nav2 BT Preview: Clear Imported TreeNodesModel Definitions"
+      },
+      {
+        "command": "nav2-bt-preview.clearImportedBehaviorTrees",
+        "title": "Nav2 BT Preview: Clear Imported BehaviorTree SubTrees"
       }
     ],
     "configuration": {
@@ -64,6 +84,11 @@
           "type": "boolean",
           "default": true,
           "description": "Automatically fit the graph view after opening, closing, or navigating BehaviorTree/SubTree views. When false, the current zoom and pan are preserved."
+        },
+        "nav2BtPreview.includeFullBehaviorTree": {
+          "type": "boolean",
+          "default": false,
+          "description": "When adding an imported BehaviorTree as a SubTree, also insert the full referenced BehaviorTree XML into the current file. When false, only the SubTree reference is inserted."
         }
       }
     },

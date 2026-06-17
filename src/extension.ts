@@ -1,11 +1,15 @@
 import * as vscode from "vscode";
 import {
+  BehaviorTreeTemplate,
+  BehaviorTreeTemplateMap,
   BtNode,
   deleteBehaviorTreeById,
   deleteXmlNodeByPath,
   getTreeNodeDefinitionCatalog,
   insertBehaviorTreeAfterPath,
+  insertBehaviorTreeXmlAfterPath,
   insertXmlChildNodeByPath,
+  parseBehaviorTreeTemplatesFromXml,
   parseBehaviorTreeXml,
   parseTreeNodeDefinitionsFromXml,
   TreeNodeDefinition,
@@ -15,6 +19,7 @@ import {
 import { getWebviewHtml, PreviewOptions } from "./webview";
 
 const IMPORTED_TREE_NODE_DEFINITIONS_KEY = "importedTreeNodeDefinitions";
+const IMPORTED_BEHAVIOR_TREES_KEY = "importedBehaviorTrees";
 
 type WebviewMessage =
   | {
@@ -50,6 +55,10 @@ type WebviewMessage =
 
 type ImportedDefinitionQuickPickItem = vscode.QuickPickItem & {
   nodeId: string;
+};
+
+type ImportedBehaviorTreeQuickPickItem = vscode.QuickPickItem & {
+  treeId: string;
 };
 
 export function activate(context: vscode.ExtensionContext): void {
@@ -96,6 +105,7 @@ export function activate(context: vscode.ExtensionContext): void {
         try {
           const xmlText = targetDocument.getText();
           const importedDefinitions = getImportedTreeNodeDefinitions(context);
+          const importedBehaviorTrees = getImportedBehaviorTrees(context);
           const nodes = parseBehaviorTreeXml(xmlText, importedDefinitions);
           const treeNodeDefinitions = getTreeNodeDefinitionCatalog(
             xmlText,
@@ -108,7 +118,11 @@ export function activate(context: vscode.ExtensionContext): void {
             nodes,
             selectedPath,
             getPreviewOptions(targetDocument.uri),
-            treeNodeDefinitions
+            treeNodeDefinitions,
+            getImportedBehaviorTreePreviews(
+              importedBehaviorTrees,
+              importedDefinitions
+            )
           );
         } catch (error) {
           const message =
@@ -187,7 +201,7 @@ export function activate(context: vscode.ExtensionContext): void {
           if (message.type === "addChildNode") {
             suppressDocumentRefresh(2500);
 
-            const result = await addChildNode(targetDocument, message);
+            const result = await addChildNode(context, targetDocument, message);
 
             if (!result) {
               suppressDocumentRefreshUntil = 0;
@@ -218,7 +232,11 @@ export function activate(context: vscode.ExtensionContext): void {
           if (message.type === "addBehaviorTree") {
             suppressDocumentRefresh(2500);
 
-            const result = await addBehaviorTree(targetDocument, message);
+            const result = await addBehaviorTree(
+              context,
+              targetDocument,
+              message
+            );
 
             if (!result) {
               suppressDocumentRefreshUntil = 0;
@@ -315,6 +333,10 @@ export function activate(context: vscode.ExtensionContext): void {
             event.affectsConfiguration(
               "nav2BtPreview.allowEmptyAttributes",
               targetDocument.uri
+            ) ||
+            event.affectsConfiguration(
+              "nav2BtPreview.includeFullBehaviorTree",
+              targetDocument.uri
             )
           ) {
             scheduleUpdatePreview();
@@ -402,6 +424,74 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   );
 
+  const importBehaviorTreeDisposable = vscode.commands.registerCommand(
+    "nav2-bt-preview.importBehaviorTree",
+    async () => {
+      const selectedFiles = await vscode.window.showOpenDialog({
+        canSelectFiles: true,
+        canSelectFolders: false,
+        canSelectMany: false,
+        filters: {
+          XML: ["xml"],
+          "All files": ["*"]
+        },
+        title: "Import BehaviorTree XML as SubTree"
+      });
+
+      const selectedFile = selectedFiles?.[0];
+
+      if (!selectedFile) {
+        return;
+      }
+
+      const fileData = await vscode.workspace.fs.readFile(selectedFile);
+      const xmlText = Buffer.from(fileData).toString("utf8");
+
+      await importBehaviorTreesFromText(
+        context,
+        xmlText,
+        selectedFile.fsPath,
+        previewRefreshers
+      );
+    }
+  );
+
+  const importBehaviorTreeFromUrlDisposable = vscode.commands.registerCommand(
+    "nav2-bt-preview.importBehaviorTreeFromUrl",
+    async () => {
+      const url = await vscode.window.showInputBox({
+        title: "Import BehaviorTree XML as SubTree from URL",
+        prompt:
+          "Paste a URL to an XML file. GitHub blob URLs are converted to raw URLs automatically.",
+        placeHolder:
+          "https://github.com/ros-navigation/navigation2/blob/main/nav2_bt_navigator/behavior_trees/navigate_to_pose_w_replanning_and_recovery.xml"
+      });
+
+      if (!url) {
+        return;
+      }
+
+      const normalizedUrl = normalizeGitHubBlobUrlToRaw(url);
+      const response = await fetch(normalizedUrl);
+
+      if (!response.ok) {
+        vscode.window.showErrorMessage(
+          `Failed to download BehaviorTree XML: HTTP ${response.status}`
+        );
+        return;
+      }
+
+      const xmlText = await response.text();
+
+      await importBehaviorTreesFromText(
+        context,
+        xmlText,
+        normalizedUrl,
+        previewRefreshers
+      );
+    }
+  );
+
   const removeImportedTreeNodeDefinitionDisposable =
     vscode.commands.registerCommand(
       "nav2-bt-preview.removeImportedTreeNodeDefinition",
@@ -409,6 +499,13 @@ export function activate(context: vscode.ExtensionContext): void {
         await removeImportedTreeNodeDefinitions(context, previewRefreshers);
       }
     );
+
+  const removeImportedBehaviorTreeDisposable = vscode.commands.registerCommand(
+    "nav2-bt-preview.removeImportedBehaviorTree",
+    async () => {
+      await removeImportedBehaviorTrees(context, previewRefreshers);
+    }
+  );
 
   const clearImportedTreeNodesModelDisposable = vscode.commands.registerCommand(
     "nav2-bt-preview.clearImportedTreeNodesModel",
@@ -428,11 +525,30 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   );
 
+  const clearImportedBehaviorTreesDisposable = vscode.commands.registerCommand(
+    "nav2-bt-preview.clearImportedBehaviorTrees",
+    async () => {
+      await context.globalState.update(IMPORTED_BEHAVIOR_TREES_KEY, undefined);
+
+      for (const refresh of previewRefreshers) {
+        refresh();
+      }
+
+      vscode.window.showInformationMessage(
+        "Cleared imported BehaviorTree subtree templates."
+      );
+    }
+  );
+
   context.subscriptions.push(
     openPreviewDisposable,
     importTreeNodesModelDisposable,
     importTreeNodesModelFromUrlDisposable,
+    importBehaviorTreeDisposable,
+    importBehaviorTreeFromUrlDisposable,
     removeImportedTreeNodeDefinitionDisposable,
+    removeImportedBehaviorTreeDisposable,
+    clearImportedBehaviorTreesDisposable,
     clearImportedTreeNodesModelDisposable
   );
 }
@@ -492,6 +608,46 @@ async function importTreeNodeDefinitionsFromText(
 
   vscode.window.showInformationMessage(
     `Imported ${importedCount} TreeNodesModel definitions from ${sourceLabel}. Total stored definitions: ${Object.keys(mergedDefinitions).length}.`
+  );
+}
+
+async function importBehaviorTreesFromText(
+  context: vscode.ExtensionContext,
+  xmlText: string,
+  sourceLabel: string,
+  previewRefreshers: Set<() => void>
+): Promise<void> {
+  const importedBehaviorTrees = parseBehaviorTreeTemplatesFromXml(
+    xmlText,
+    sourceLabel
+  );
+  const importedCount = Object.keys(importedBehaviorTrees).length;
+
+  if (importedCount === 0) {
+    vscode.window.showWarningMessage(
+      "No complete BehaviorTree definitions with IDs were found in the selected XML."
+    );
+    return;
+  }
+
+  const existingBehaviorTrees = getImportedBehaviorTrees(context);
+
+  const mergedBehaviorTrees: BehaviorTreeTemplateMap = {
+    ...existingBehaviorTrees,
+    ...importedBehaviorTrees
+  };
+
+  await context.globalState.update(
+    IMPORTED_BEHAVIOR_TREES_KEY,
+    mergedBehaviorTrees
+  );
+
+  for (const refresh of previewRefreshers) {
+    refresh();
+  }
+
+  vscode.window.showInformationMessage(
+    `Imported ${importedCount} BehaviorTree subtree template${importedCount === 1 ? "" : "s"} from ${sourceLabel}. Total stored templates: ${Object.keys(mergedBehaviorTrees).length}.`
   );
 }
 
@@ -557,6 +713,67 @@ async function removeImportedTreeNodeDefinitions(
   );
 }
 
+async function removeImportedBehaviorTrees(
+  context: vscode.ExtensionContext,
+  previewRefreshers: Set<() => void>
+): Promise<void> {
+  const existingBehaviorTrees = getImportedBehaviorTrees(context);
+  const entries = Object.entries(existingBehaviorTrees).sort(
+    ([leftId], [rightId]) => leftId.localeCompare(rightId)
+  );
+
+  if (entries.length === 0) {
+    vscode.window.showInformationMessage(
+      "There are no imported BehaviorTree subtree templates to remove."
+    );
+    return;
+  }
+
+  const items: ImportedBehaviorTreeQuickPickItem[] = entries.map(
+    ([treeId, tree]) => {
+      return {
+        treeId,
+        label: treeId,
+        description: tree.source,
+        detail: "Imported BehaviorTree subtree template"
+      };
+    }
+  );
+
+  const selectedItems = await vscode.window.showQuickPick(items, {
+    title: "Remove Imported BehaviorTree Subtree Templates",
+    placeHolder: "Select one or more imported BehaviorTree templates to remove",
+    canPickMany: true
+  });
+
+  if (!selectedItems || selectedItems.length === 0) {
+    return;
+  }
+
+  const updatedBehaviorTrees: BehaviorTreeTemplateMap = {
+    ...existingBehaviorTrees
+  };
+
+  for (const item of selectedItems) {
+    delete updatedBehaviorTrees[item.treeId];
+  }
+
+  await context.globalState.update(
+    IMPORTED_BEHAVIOR_TREES_KEY,
+    Object.keys(updatedBehaviorTrees).length > 0
+      ? updatedBehaviorTrees
+      : undefined
+  );
+
+  for (const refresh of previewRefreshers) {
+    refresh();
+  }
+
+  vscode.window.showInformationMessage(
+    `Removed ${selectedItems.length} imported BehaviorTree subtree template${selectedItems.length === 1 ? "" : "s"}. Remaining stored templates: ${Object.keys(updatedBehaviorTrees).length}.`
+  );
+}
+
 function getImportedTreeNodeDefinitions(
   context: vscode.ExtensionContext
 ): TreeNodeDefinitionMap {
@@ -590,6 +807,59 @@ function getImportedTreeNodeDefinitions(
   return normalized;
 }
 
+function getImportedBehaviorTrees(
+  context: vscode.ExtensionContext
+): BehaviorTreeTemplateMap {
+  const raw = context.globalState.get<Record<string, unknown>>(
+    IMPORTED_BEHAVIOR_TREES_KEY,
+    {}
+  );
+
+  const normalized: BehaviorTreeTemplateMap = {};
+
+  for (const [id, value] of Object.entries(raw)) {
+    if (!isBehaviorTreeTemplate(value)) {
+      continue;
+    }
+
+    normalized[id] = {
+      ...value,
+      id
+    };
+  }
+
+  return normalized;
+}
+
+function getImportedBehaviorTreePreviews(
+  importedBehaviorTrees: BehaviorTreeTemplateMap,
+  importedDefinitions: TreeNodeDefinitionMap
+): Array<{ id: string; source: string; tree: BtNode }> {
+  const previews: Array<{ id: string; source: string; tree: BtNode }> = [];
+
+  for (const tree of Object.values(importedBehaviorTrees)) {
+    const parsedTrees = parseBehaviorTreeXml(
+      tree.xmlText,
+      importedDefinitions
+    );
+    const parsedTree = parsedTrees.find(
+      (node) => node.tag === "BehaviorTree" && node.attributes["ID"] === tree.id
+    );
+
+    if (!parsedTree) {
+      continue;
+    }
+
+    previews.push({
+      id: tree.id,
+      source: tree.source,
+      tree: parsedTree
+    });
+  }
+
+  return previews.sort((left, right) => left.id.localeCompare(right.id));
+}
+
 function isTreeNodeDefinition(value: unknown): value is TreeNodeDefinition {
   if (!value || typeof value !== "object") {
     return false;
@@ -604,6 +874,20 @@ function isTreeNodeDefinition(value: unknown): value is TreeNodeDefinition {
       maybe.kind === "condition" ||
       maybe.kind === "action") &&
     Array.isArray(maybe.ports)
+  );
+}
+
+function isBehaviorTreeTemplate(value: unknown): value is BehaviorTreeTemplate {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const maybe = value as Partial<BehaviorTreeTemplate>;
+
+  return (
+    typeof maybe.id === "string" &&
+    typeof maybe.xmlText === "string" &&
+    typeof maybe.source === "string"
   );
 }
 
@@ -654,8 +938,18 @@ function getPreviewOptions(resourceUri: vscode.Uri): PreviewOptions {
     allowEmptyAttributes: configuration.get<boolean>(
       "allowEmptyAttributes",
       false
+    ),
+    includeFullBehaviorTree: configuration.get<boolean>(
+      "includeFullBehaviorTree",
+      false
     )
   };
+}
+
+function getIncludeFullBehaviorTreeSetting(resourceUri: vscode.Uri): boolean {
+  return vscode.workspace
+    .getConfiguration("nav2BtPreview", resourceUri)
+    .get<boolean>("includeFullBehaviorTree", false);
 }
 
 function getAutoSaveEditsSetting(resourceUri: vscode.Uri): boolean {
@@ -733,6 +1027,7 @@ async function updateAttribute(
 }
 
 async function addChildNode(
+  context: vscode.ExtensionContext,
   document: vscode.TextDocument,
   message: Extract<WebviewMessage, { type: "addChildNode" }>
 ): Promise<{ childPath: number[] } | undefined> {
@@ -765,16 +1060,18 @@ async function addChildNode(
     message.tagName,
     attributes
   );
+  const includeFullBehaviorTree = getIncludeFullBehaviorTreeSetting(
+    document.uri
+  );
 
-  if (referencedBehaviorTreeId) {
+  if (referencedBehaviorTreeId && includeFullBehaviorTree) {
     try {
-      const behaviorTreeResult = insertBehaviorTreeAfterExistingReferencePath(
+      updatedXml = insertImportedBehaviorTreeChainAfterExistingReferencePath(
+        context,
         updatedXml,
         message.parentPath,
         referencedBehaviorTreeId
       );
-
-      updatedXml = behaviorTreeResult.xmlText;
     } catch (error) {
       if (!isAlreadyExistsError(error)) {
         const messageText =
@@ -809,6 +1106,7 @@ async function addChildNode(
 }
 
 async function addBehaviorTree(
+  context: vscode.ExtensionContext,
   document: vscode.TextDocument,
   message: Extract<WebviewMessage, { type: "addBehaviorTree" }>
 ): Promise<{ behaviorTreePath: number[] } | undefined> {
@@ -817,7 +1115,8 @@ async function addBehaviorTree(
   let result;
 
   try {
-    result = insertBehaviorTreeAfterExistingReferencePath(
+    result = insertImportedBehaviorTreeChainResultAfterExistingReferencePath(
+      context,
       xmlText,
       message.referencePath,
       message.behaviorTreeId
@@ -951,6 +1250,182 @@ function insertBehaviorTreeAfterExistingReferencePath(
       );
 }
 
+function insertBehaviorTreeXmlAfterExistingReferencePath(
+  xmlText: string,
+  referencePath: number[],
+  behaviorTreeXml: string
+): ReturnType<typeof insertBehaviorTreeXmlAfterPath> {
+  let lastError: unknown;
+
+  for (let length = referencePath.length; length >= 1; length -= 1) {
+    const candidatePath = referencePath.slice(0, length);
+
+    try {
+      return insertBehaviorTreeXmlAfterPath(
+        xmlText,
+        candidatePath,
+        behaviorTreeXml
+      );
+    } catch (error) {
+      lastError = error;
+
+      if (isMissingReferenceError(error)) {
+        continue;
+      }
+
+      throw error;
+    }
+  }
+
+  throw lastError instanceof Error
+    ? lastError
+    : new Error(
+        `Could not find reference XML node at path [${referencePath.join(", ")}].`
+      );
+}
+
+function insertImportedBehaviorTreeChainAfterExistingReferencePath(
+  context: vscode.ExtensionContext,
+  xmlText: string,
+  referencePath: number[],
+  behaviorTreeId: string
+): string {
+  return insertImportedBehaviorTreeChainResultAfterExistingReferencePath(
+    context,
+    xmlText,
+    referencePath,
+    behaviorTreeId
+  ).xmlText;
+}
+
+function insertImportedBehaviorTreeChainResultAfterExistingReferencePath(
+  context: vscode.ExtensionContext,
+  xmlText: string,
+  referencePath: number[],
+  behaviorTreeId: string
+): ReturnType<typeof insertBehaviorTreeAfterPath> {
+  const importedBehaviorTrees = getImportedBehaviorTrees(context);
+  const visitedIds = new Set<string>();
+  const importedBehaviorTree = importedBehaviorTrees[behaviorTreeId];
+  const insertResult = importedBehaviorTree
+    ? insertBehaviorTreeXmlAfterExistingReferencePath(
+        xmlText,
+        referencePath,
+        importedBehaviorTree.xmlText
+      )
+    : insertBehaviorTreeAfterExistingReferencePath(
+        xmlText,
+        referencePath,
+        behaviorTreeId
+      );
+
+  visitedIds.add(behaviorTreeId);
+
+  return {
+    ...insertResult,
+    xmlText: importedBehaviorTree
+      ? insertNestedImportedBehaviorTreeChainRecursive(
+          insertResult.xmlText,
+          referencePath,
+          importedBehaviorTree,
+          importedBehaviorTrees,
+          visitedIds
+        )
+      : insertResult.xmlText
+  };
+}
+
+function insertImportedBehaviorTreeChainRecursive(
+  xmlText: string,
+  referencePath: number[],
+  behaviorTreeId: string,
+  importedBehaviorTrees: BehaviorTreeTemplateMap,
+  visitedIds: Set<string>
+): string {
+  if (visitedIds.has(behaviorTreeId)) {
+    return xmlText;
+  }
+
+  visitedIds.add(behaviorTreeId);
+
+  const importedBehaviorTree = importedBehaviorTrees[behaviorTreeId];
+  const insertResult = importedBehaviorTree
+    ? insertBehaviorTreeXmlAfterExistingReferencePath(
+        xmlText,
+        referencePath,
+        importedBehaviorTree.xmlText
+      )
+    : insertBehaviorTreeAfterExistingReferencePath(
+        xmlText,
+        referencePath,
+        behaviorTreeId
+      );
+
+  let updatedXml = insertResult.xmlText;
+
+  if (!importedBehaviorTree) {
+    return updatedXml;
+  }
+
+  for (const nestedBehaviorTreeId of collectReferencedBehaviorTreeIdsFromXml(
+    importedBehaviorTree.xmlText
+  )) {
+    if (!importedBehaviorTrees[nestedBehaviorTreeId]) {
+      continue;
+    }
+
+    try {
+      updatedXml = insertImportedBehaviorTreeChainRecursive(
+        updatedXml,
+        referencePath,
+        nestedBehaviorTreeId,
+        importedBehaviorTrees,
+        visitedIds
+      );
+    } catch (error) {
+      if (!isAlreadyExistsError(error)) {
+        throw error;
+      }
+    }
+  }
+
+  return updatedXml;
+}
+
+function insertNestedImportedBehaviorTreeChainRecursive(
+  xmlText: string,
+  referencePath: number[],
+  importedBehaviorTree: BehaviorTreeTemplate,
+  importedBehaviorTrees: BehaviorTreeTemplateMap,
+  visitedIds: Set<string>
+): string {
+  let updatedXml = xmlText;
+
+  for (const nestedBehaviorTreeId of collectReferencedBehaviorTreeIdsFromXml(
+    importedBehaviorTree.xmlText
+  )) {
+    if (!importedBehaviorTrees[nestedBehaviorTreeId]) {
+      continue;
+    }
+
+    try {
+      updatedXml = insertImportedBehaviorTreeChainRecursive(
+        updatedXml,
+        referencePath,
+        nestedBehaviorTreeId,
+        importedBehaviorTrees,
+        visitedIds
+      );
+    } catch (error) {
+      if (!isAlreadyExistsError(error)) {
+        throw error;
+      }
+    }
+  }
+
+  return updatedXml;
+}
+
 function getReferencedBehaviorTreeId(
   tagName: string,
   attributes: Record<string, string>
@@ -966,6 +1441,42 @@ function getReferencedBehaviorTreeId(
   }
 
   return id;
+}
+
+function collectReferencedBehaviorTreeIdsFromXml(xmlText: string): string[] {
+  const parsedNodes = parseBehaviorTreeXml(xmlText);
+  const referencedIds: string[] = [];
+  const visitedIds = new Set<string>();
+
+  for (const node of parsedNodes) {
+    collectReferencedBehaviorTreeIdsFromNode(
+      node,
+      referencedIds,
+      visitedIds
+    );
+  }
+
+  return referencedIds;
+}
+
+function collectReferencedBehaviorTreeIdsFromNode(
+  node: BtNode,
+  referencedIds: string[],
+  visitedIds: Set<string>
+): void {
+  const referencedBehaviorTreeId = getReferencedBehaviorTreeId(
+    node.tag,
+    node.attributes
+  );
+
+  if (referencedBehaviorTreeId && !visitedIds.has(referencedBehaviorTreeId)) {
+    visitedIds.add(referencedBehaviorTreeId);
+    referencedIds.push(referencedBehaviorTreeId);
+  }
+
+  for (const child of node.children) {
+    collectReferencedBehaviorTreeIdsFromNode(child, referencedIds, visitedIds);
+  }
 }
 
 function collectReferencedBehaviorTreeIdsForDelete(

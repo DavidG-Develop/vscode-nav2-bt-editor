@@ -5,6 +5,7 @@ export type PreviewOptions = {
   openOnlyOneBehaviorTree: boolean;
   autoFitOnTreeChange: boolean;
   allowEmptyAttributes: boolean;
+  includeFullBehaviorTree: boolean;
 };
 
 export function getWebviewHtml(
@@ -13,7 +14,8 @@ export function getWebviewHtml(
   nodes: BtNode[],
   selectedPath: number[] | undefined,
   options: PreviewOptions,
-  treeNodeDefinitions: TreeNodeDefinition[]
+  treeNodeDefinitions: TreeNodeDefinition[],
+  importedBehaviorTrees: Array<{ id: string; source: string; tree: BtNode }>
 ): string {
   const scriptUri = webview.asWebviewUri(
     vscode.Uri.joinPath(extensionUri, "media", "preview.js")
@@ -31,6 +33,9 @@ export function getWebviewHtml(
     /</g,
     "\\u003c"
   );
+  const initialImportedBehaviorTrees = JSON.stringify(
+    importedBehaviorTrees
+  ).replace(/</g, "\\u003c");
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -63,6 +68,7 @@ export function getWebviewHtml(
     window.initialSelectedPath = ${initialSelectedPath};
     window.initialPreviewOptions = ${initialOptions};
     window.initialTreeNodeDefinitions = ${initialDefinitions};
+    window.initialImportedBehaviorTrees = ${initialImportedBehaviorTrees};
   </script>
   <script nonce="${nonce}" src="${scriptUri}"></script>
 </body>

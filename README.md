@@ -17,6 +17,8 @@ It is intended for users who work with Nav2 behavior tree XML files, BehaviorTre
 - Add new child nodes to the XML tree.
 - Import external `TreeNodesModel` XML files.
 - Import external node definitions from URLs, including GitHub blob URLs.
+- Import external `BehaviorTree` XML files as reusable SubTree templates.
+- Import external SubTree templates from URLs, including GitHub blob URLs.
 - Remember imported node definitions between VS Code sessions.
 - Remove selected imported node definitions without clearing everything.
 - Navigate between separate BehaviorTree definitions.
@@ -69,6 +71,10 @@ You can select a known node type or type a custom node name. If the node is know
 
 If the node is unknown, it is inserted as a basic XML node. You can then select it and add custom attributes manually.
 
+When adding a `SubTree`, imported `BehaviorTree` templates are shown in the SubTree type list. Selecting one fills the `ID` attribute and `_autoremap="true"`.
+
+By default, only the `SubTree` reference is inserted. Enable `nav2BtPreview.includeFullBehaviorTree` to also insert the full referenced `BehaviorTree` XML into the current file.
+
 ## Unknown nodes
 
 A node is considered unknown when the extension cannot find a matching definition in:
@@ -103,6 +109,26 @@ Imported definitions are stored by the extension and remembered across VS Code s
 
 If a node name exists both in the built-in catalog and imported definitions, the imported definition takes priority.
 
+## Importing SubTree templates
+
+You can import external `BehaviorTree` XML files and use them when adding `SubTree` nodes.
+
+To import from a local XML file, run:
+
+```text
+Nav2 BT Preview: Import BehaviorTree XML as SubTree
+```
+
+To import from a URL, run:
+
+```text
+Nav2 BT Preview: Import BehaviorTree XML as SubTree from URL
+```
+
+Each complete `BehaviorTree` with an `ID` in the imported XML is stored as a reusable SubTree template. Imported templates are remembered across VS Code sessions.
+
+When `nav2BtPreview.includeFullBehaviorTree` is enabled and a selected template references other imported `BehaviorTree` IDs through nested `SubTree` nodes, those referenced templates are inserted too.
+
 ## Managing imported definitions
 
 To remove selected imported definitions, run:
@@ -117,6 +143,18 @@ To clear all imported definitions, run:
 
 ```text
 Nav2 BT Preview: Clear Imported TreeNodesModel Definitions
+```
+
+To remove selected imported SubTree templates, run:
+
+```text
+Nav2 BT Preview: Remove Imported BehaviorTree SubTree
+```
+
+To clear all imported SubTree templates, run:
+
+```text
+Nav2 BT Preview: Clear Imported BehaviorTree SubTrees
 ```
 
 ## SubTree navigation and expansion
@@ -177,6 +215,18 @@ When enabled, the graph view is automatically fitted after opening, closing, or 
 
 When disabled, subtree open and close operations keep the current zoom and pan unchanged.
 
+### `nav2BtPreview.includeFullBehaviorTree`
+
+Default:
+
+```json
+false
+```
+
+When enabled, adding an imported BehaviorTree as a `SubTree` also inserts the full referenced `BehaviorTree` XML into the current file.
+
+When disabled, only the `SubTree` reference is inserted.
+
 ## Commands
 
 | Command | Description |
@@ -184,8 +234,12 @@ When disabled, subtree open and close operations keep the current zoom and pan u
 | `Nav2 BT Preview: Open Preview` | Open the behavior tree preview for the selected XML file. |
 | `Nav2 BT Preview: Import TreeNodesModel XML File` | Import node definitions from a local XML file. |
 | `Nav2 BT Preview: Import TreeNodesModel XML from URL` | Import node definitions from a URL. |
+| `Nav2 BT Preview: Import BehaviorTree XML as SubTree` | Import BehaviorTree definitions from a local XML file as SubTree templates. |
+| `Nav2 BT Preview: Import BehaviorTree XML as SubTree from URL` | Import BehaviorTree definitions from a URL as SubTree templates. |
 | `Nav2 BT Preview: Remove Imported TreeNode Definition` | Show imported definitions and remove selected entries. |
 | `Nav2 BT Preview: Clear Imported TreeNodesModel Definitions` | Remove all imported node definitions. |
+| `Nav2 BT Preview: Remove Imported BehaviorTree SubTree` | Show imported SubTree templates and remove selected entries. |
+| `Nav2 BT Preview: Clear Imported BehaviorTree SubTrees` | Remove all imported SubTree templates. |
 
 ## Relationship to other projects
 

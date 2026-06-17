@@ -3,6 +3,7 @@
     <Fallback>
       <AlignToDock docking_station="1"/>
       <SubTree ID="docktree" _autoremap="true"/>
+      <SubTree ID="FollowPoint" _autoremap="true"/>
     </Fallback>
   </BehaviorTree>
   <BehaviorTree ID="docktree">

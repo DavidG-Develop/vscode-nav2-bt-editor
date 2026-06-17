@@ -20,6 +20,14 @@ export type TreeNodeDefinition = {
 
 export type TreeNodeDefinitionMap = Record<string, TreeNodeDefinition>;
 
+export type BehaviorTreeTemplate = {
+  id: string;
+  xmlText: string;
+  source: string;
+};
+
+export type BehaviorTreeTemplateMap = Record<string, BehaviorTreeTemplate>;
+
 export type BtNodeSource = {
   path: number[];
   startOffset: number;
@@ -163,6 +171,38 @@ export function parseTreeNodeDefinitionsFromXml(
   return Object.fromEntries(catalog.entries());
 }
 
+export function parseBehaviorTreeTemplatesFromXml(
+  xmlText: string,
+  source: string
+): BehaviorTreeTemplateMap {
+  const roots = scanXml(xmlText);
+  const behaviorTrees: InternalXmlNode[] = [];
+  const templates = new Map<string, BehaviorTreeTemplate>();
+
+  for (const root of roots) {
+    collectBehaviorTrees(root, behaviorTrees);
+  }
+
+  for (const behaviorTree of behaviorTrees) {
+    const id = behaviorTree.attributes["ID"]?.trim();
+
+    if (!id || !behaviorTree.closeTag) {
+      continue;
+    }
+
+    templates.set(id, {
+      id,
+      source,
+      xmlText: xmlText.slice(
+        behaviorTree.source.startOffset,
+        behaviorTree.closeTag.endOffset
+      )
+    });
+  }
+
+  return Object.fromEntries(templates.entries());
+}
+
 export function updateXmlAttributeByPath(
   xmlText: string,
   path: number[],
@@ -262,6 +302,26 @@ export function insertBehaviorTreeAfterPath(
 ): InsertBehaviorTreeResult {
   validateXmlName(behaviorTreeId, "BehaviorTree ID");
 
+  const behaviorTreeXml = [
+    `<BehaviorTree ID="${encodeXmlAttribute(behaviorTreeId, '"')}">`,
+    "</BehaviorTree>"
+  ].join("\n");
+
+  return insertBehaviorTreeXmlAfterPath(
+    xmlText,
+    referencePath,
+    behaviorTreeXml
+  );
+}
+
+export function insertBehaviorTreeXmlAfterPath(
+  xmlText: string,
+  referencePath: number[],
+  behaviorTreeXml: string
+): InsertBehaviorTreeResult {
+  const template = parseSingleBehaviorTreeTemplate(behaviorTreeXml);
+  validateXmlName(template.id, "BehaviorTree ID");
+
   const roots = scanXml(xmlText);
   const reference = findNodeByPath(roots, referencePath);
 
@@ -271,8 +331,8 @@ export function insertBehaviorTreeAfterPath(
     );
   }
 
-  if (findBehaviorTreeById(roots, behaviorTreeId)) {
-    throw new Error(`BehaviorTree with ID "${behaviorTreeId}" already exists.`);
+  if (findBehaviorTreeById(roots, template.id)) {
+    throw new Error(`BehaviorTree with ID "${template.id}" already exists.`);
   }
 
   const referenceTree = findNearestBehaviorTree(reference) ?? reference;
@@ -285,12 +345,10 @@ export function insertBehaviorTreeAfterPath(
 
   if (documentRoot && documentRoot !== referenceTree && documentRoot.closeTag) {
     const insertBeforeOffset = documentRoot.closeTag.startOffset;
-
-    const insertion = [
-      `${treeIndent}<BehaviorTree ID="${encodeXmlAttribute(behaviorTreeId, '"')}">`,
-      `${treeIndent}</BehaviorTree>`,
-      ""
-    ].join("\n");
+    const insertion = `${formatBehaviorTreeXmlForInsert(
+      template.xmlText,
+      treeIndent
+    )}\n`;
 
     const needsLeadingNewline =
       insertBeforeOffset > 0 && xmlText[insertBeforeOffset - 1] !== "\n";
@@ -315,11 +373,10 @@ export function insertBehaviorTreeAfterPath(
   const insertAfterOffset =
     referenceTree.closeTag?.endOffset ?? referenceTree.source.endOpenTagOffset;
 
-  const insertion = [
-    "",
-    `${treeIndent}<BehaviorTree ID="${encodeXmlAttribute(behaviorTreeId, '"')}">`,
-    `${treeIndent}</BehaviorTree>`
-  ].join("\n");
+  const insertion = `\n${formatBehaviorTreeXmlForInsert(
+    template.xmlText,
+    treeIndent
+  )}`;
 
   const behaviorTreePath = getInsertedRootSiblingPath(roots, referenceTree);
 
@@ -481,6 +538,78 @@ function findBehaviorTreeByIdRecursive(
   }
 
   return undefined;
+}
+
+function parseSingleBehaviorTreeTemplate(
+  behaviorTreeXml: string
+): BehaviorTreeTemplate {
+  const roots = scanXml(behaviorTreeXml);
+  const behaviorTrees: InternalXmlNode[] = [];
+
+  for (const root of roots) {
+    collectBehaviorTrees(root, behaviorTrees);
+  }
+
+  const behaviorTree = behaviorTrees[0];
+  const id = behaviorTree?.attributes["ID"]?.trim();
+
+  if (!behaviorTree || !id || !behaviorTree.closeTag) {
+    throw new Error("Imported subtree XML does not contain a complete BehaviorTree with an ID.");
+  }
+
+  return {
+    id,
+    source: "imported",
+    xmlText: behaviorTreeXml.slice(
+      behaviorTree.source.startOffset,
+      behaviorTree.closeTag.endOffset
+    )
+  };
+}
+
+function formatBehaviorTreeXmlForInsert(
+  behaviorTreeXml: string,
+  indent: string
+): string {
+  const normalizedXml = removeBlankXmlLines(behaviorTreeXml.trim());
+  const lines = normalizedXml.split(/\r?\n/);
+  const commonIndent = getCommonLineIndent(lines);
+
+  return lines
+    .map((line) => `${indent}${line.slice(commonIndent.length)}`)
+    .join("\n");
+}
+
+function getCommonLineIndent(lines: string[]): string {
+  const nonBlankLines = lines.filter((line) => !/^[\t ]*$/.test(line));
+
+  if (nonBlankLines.length === 0) {
+    return "";
+  }
+
+  let commonIndent = getLeadingWhitespace(nonBlankLines[0]);
+
+  for (const line of nonBlankLines.slice(1)) {
+    const lineIndent = getLeadingWhitespace(line);
+    let index = 0;
+
+    while (
+      index < commonIndent.length &&
+      index < lineIndent.length &&
+      commonIndent[index] === lineIndent[index]
+    ) {
+      index += 1;
+    }
+
+    commonIndent = commonIndent.slice(0, index);
+  }
+
+  return commonIndent;
+}
+
+function getLeadingWhitespace(line: string): string {
+  const match = /^[\t ]*/.exec(line);
+  return match?.[0] ?? "";
 }
 
 function buildTreeNodesModelCatalog(

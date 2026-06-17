@@ -2,6 +2,7 @@ const vscode = acquireVsCodeApi();
 
 const nodes = window.initialBtNodes ?? [];
 const treeNodeDefinitions = window.initialTreeNodeDefinitions ?? [];
+const importedBehaviorTrees = window.initialImportedBehaviorTrees ?? [];
 const previewOptions = window.initialPreviewOptions ?? {};
 const openOnlyOneBehaviorTree =
   previewOptions.openOnlyOneBehaviorTree !== false;
@@ -9,6 +10,8 @@ const autoFitOnTreeChange =
   previewOptions.autoFitOnTreeChange !== false;
 const allowEmptyAttributes =
   previewOptions.allowEmptyAttributes === true;
+const includeFullBehaviorTree =
+  previewOptions.includeFullBehaviorTree === true;
 
 let selectedNodePath = window.initialSelectedPath ?? undefined;
 let selectedNodeId = undefined;
@@ -785,7 +788,11 @@ function appendSubTreeHint(group, node) {
   hint.setAttribute("text-anchor", "middle");
   hint.setAttribute("class", "bt-text bt-text-hint");
 
-  if (openOnlyOneBehaviorTree) {
+  if (
+    openOnlyOneBehaviorTree &&
+    node.attributes?.ID &&
+    findBehaviorTreeById(nodes, node.attributes.ID)
+  ) {
     hint.textContent = "double-click to open";
   } else if (node.inlineExpanded) {
     hint.textContent = "double-click to collapse";
@@ -1343,7 +1350,7 @@ function attachAddBehaviorTreeHandlers(node) {
       return;
     }
 
-    applyLocalBehaviorTreeInsert(node, behaviorTreeId, true);
+    applyLocalImportedBehaviorTreeChainInsert(node, behaviorTreeId, true);
 
     vscode.postMessage({
       type: "addBehaviorTree",
@@ -1362,7 +1369,13 @@ function attachAddChildHandlers(parentNode) {
   const addButton = document.getElementById("add-child-button");
   const definitionPreview = document.getElementById("new-child-definition-preview");
 
-  if (!kindSelect || !knownTypeSelect || !customTypeInput || !addButton || !definitionPreview) {
+  if (
+    !kindSelect ||
+    !knownTypeSelect ||
+    !customTypeInput ||
+    !addButton ||
+    !definitionPreview
+  ) {
     return;
   }
 
@@ -1387,7 +1400,20 @@ function attachAddChildHandlers(parentNode) {
       const option = document.createElement("option");
       option.value = definition.id;
       option.textContent = definition.id;
+      option.dataset.nodeTag = definition.id;
       knownTypeSelect.appendChild(option);
+    }
+
+    if (kind === "subtree") {
+      for (const behaviorTree of importedBehaviorTrees) {
+        const option = document.createElement("option");
+        option.value = `imported:${behaviorTree.id}`;
+        option.textContent = `SubTree: ${behaviorTree.id}`;
+        option.title = behaviorTree.source ?? "";
+        option.dataset.nodeTag = "SubTree";
+        option.dataset.templateId = behaviorTree.id;
+        knownTypeSelect.appendChild(option);
+      }
     }
 
     if (definitions.length > 0) {
@@ -1402,7 +1428,14 @@ function attachAddChildHandlers(parentNode) {
       return customTypeInput.value.trim();
     }
 
-    return knownTypeSelect.value.trim();
+    return (
+      getSelectedKnownTypeOption()?.dataset.nodeTag?.trim() ??
+      knownTypeSelect.value.trim()
+    );
+  }
+
+  function getSelectedKnownTypeOption() {
+    return knownTypeSelect.selectedOptions?.[0];
   }
 
   function updateDefinitionPreview() {
@@ -1430,15 +1463,75 @@ function attachAddChildHandlers(parentNode) {
           Known ${escapeHtml(getDefinitionDisplayCategory(definition))} node with no defined attributes.
         </div>
       `;
+      applySelectedSubtreeTemplateToIdInput();
       return;
     }
 
     definitionPreview.innerHTML = `
+      ${renderSelectedSubtreeTemplatePreview()}
       <h3>New child attributes</h3>
       <table class="attr-table">
         ${definition.ports.map((port) => renderChildPortRow(port)).join("")}
       </table>
     `;
+
+    applySelectedSubtreeTemplateToIdInput();
+  }
+
+  function renderSelectedSubtreeTemplatePreview() {
+    const behaviorTree = getSelectedImportedBehaviorTree();
+
+    if (!behaviorTree) {
+      return "";
+    }
+
+    return `
+      <div class="info-box">
+        Imported BehaviorTree "${escapeHtml(behaviorTree.id)}" selected. ${
+          includeFullBehaviorTree
+            ? "The full referenced BehaviorTree XML will be inserted if it is not already in this XML."
+            : "Only the SubTree reference will be inserted."
+        }
+      </div>
+    `;
+  }
+
+  function applySelectedSubtreeTemplateToIdInput() {
+    if (kindSelect.value !== "subtree") {
+      return;
+    }
+
+    const behaviorTree = getSelectedImportedBehaviorTree();
+
+    if (!behaviorTree) {
+      return;
+    }
+
+    const idInput = document.querySelector(
+      '.new-child-port-input[data-port-name="ID"]'
+    );
+
+    if (idInput) {
+      idInput.value = behaviorTree.id;
+    }
+
+    const autoremapInput = document.querySelector(
+      '.new-child-port-input[data-port-name="_autoremap"]'
+    );
+
+    if (autoremapInput && !autoremapInput.value) {
+      autoremapInput.value = "true";
+    }
+  }
+
+  function getSelectedImportedBehaviorTree() {
+    const selectedId = getSelectedKnownTypeOption()?.dataset.templateId;
+
+    if (!selectedId) {
+      return undefined;
+    }
+
+    return importedBehaviorTrees.find((tree) => tree.id === selectedId);
   }
 
   kindSelect.addEventListener("change", populateKnownTypeSelect);
@@ -1507,12 +1600,13 @@ function attachAddChildHandlers(parentNode) {
 
     const subtreeId = attributes.ID?.trim();
     const shouldCreateReferencedBehaviorTree =
+      includeFullBehaviorTree &&
       isSubTreeTagName(tagName) &&
       subtreeId &&
       !findBehaviorTreeById(nodes, subtreeId);
 
     if (shouldCreateReferencedBehaviorTree) {
-      applyLocalBehaviorTreeInsert(parentNode, subtreeId, false);
+      applyLocalImportedBehaviorTreeChainInsert(parentNode, subtreeId, false);
     }
 
     selectedNodePath = newChild.source.path;
@@ -1778,7 +1872,91 @@ function removeBehaviorTreeById(roots, behaviorTreeId) {
   }
 }
 
-function applyLocalBehaviorTreeInsert(referenceNode, behaviorTreeId, makeActive) {
+function applyLocalImportedBehaviorTreeChainInsert(
+  referenceNode,
+  behaviorTreeId,
+  makeActive,
+  visitedIds = new Set()
+) {
+  if (visitedIds.has(behaviorTreeId)) {
+    return findBehaviorTreeById(nodes, behaviorTreeId);
+  }
+
+  visitedIds.add(behaviorTreeId);
+
+  const importedBehaviorTree = findImportedBehaviorTreeById(behaviorTreeId);
+  const insertedTree = applyLocalBehaviorTreeInsert(
+    referenceNode,
+    behaviorTreeId,
+    makeActive,
+    importedBehaviorTree?.tree
+  );
+
+  if (!importedBehaviorTree?.tree) {
+    return insertedTree;
+  }
+
+  for (const nestedBehaviorTreeId of collectReferencedBehaviorTreeIdsFromTree(
+    importedBehaviorTree.tree
+  )) {
+    if (
+      !findImportedBehaviorTreeById(nestedBehaviorTreeId) ||
+      findBehaviorTreeById(nodes, nestedBehaviorTreeId)
+    ) {
+      continue;
+    }
+
+    applyLocalImportedBehaviorTreeChainInsert(
+      referenceNode,
+      nestedBehaviorTreeId,
+      false,
+      visitedIds
+    );
+  }
+
+  return insertedTree;
+}
+
+function collectReferencedBehaviorTreeIdsFromTree(tree) {
+  const referencedIds = [];
+  const visitedIds = new Set();
+
+  collectReferencedBehaviorTreeIdsFromTreeNode(
+    tree,
+    referencedIds,
+    visitedIds
+  );
+
+  return referencedIds;
+}
+
+function collectReferencedBehaviorTreeIdsFromTreeNode(
+  node,
+  referencedIds,
+  visitedIds
+) {
+  const referencedId = getReferencedBehaviorTreeId(node);
+
+  if (referencedId && !visitedIds.has(referencedId)) {
+    visitedIds.add(referencedId);
+    referencedIds.push(referencedId);
+  }
+
+  for (const child of node.children ?? []) {
+    collectReferencedBehaviorTreeIdsFromTreeNode(
+      child,
+      referencedIds,
+      visitedIds
+    );
+  }
+}
+
+function applyLocalBehaviorTreeInsert(
+  referenceNode,
+  behaviorTreeId,
+  makeActive,
+  templateTree = undefined
+) {
   const existing = findBehaviorTreeById(nodes, behaviorTreeId);
 
   if (existing) {
@@ -1795,7 +1973,9 @@ function applyLocalBehaviorTreeInsert(referenceNode, behaviorTreeId, makeActive)
   const rootIndex = referenceRoot ? nodes.indexOf(referenceRoot) : nodes.length - 1;
   const insertIndex = rootIndex >= 0 ? rootIndex + 1 : nodes.length;
 
-  const newTree = createLocalBehaviorTreeNode(behaviorTreeId, [insertIndex]);
+  const newTree = templateTree
+    ? cloneImportedBehaviorTreeNode(templateTree, behaviorTreeId, [insertIndex])
+    : createLocalBehaviorTreeNode(behaviorTreeId, [insertIndex]);
 
   nodes.splice(insertIndex, 0, newTree);
 
@@ -1808,6 +1988,57 @@ function applyLocalBehaviorTreeInsert(referenceNode, behaviorTreeId, makeActive)
   }
 
   return newTree;
+}
+
+function cloneImportedBehaviorTreeNode(templateNode, behaviorTreeId, path) {
+  const clonedNode = cloneImportedTreeNodeRecursive(templateNode, path);
+
+  clonedNode.attributes = {
+    ...(clonedNode.attributes ?? {}),
+    ID: behaviorTreeId
+  };
+  clonedNode.name = behaviorTreeId;
+  clonedNode.source.startTag = setAttributeInOpenTag(
+    clonedNode.source.startTag,
+    "ID",
+    behaviorTreeId
+  );
+
+  return clonedNode;
+}
+
+function cloneImportedTreeNodeRecursive(templateNode, path) {
+  localNodeCounter += 1;
+
+  const clonedNode = {
+    id: `local-node-${localNodeCounter}`,
+    tag: templateNode.tag,
+    kind: templateNode.kind,
+    name: templateNode.name,
+    attributes: {
+      ...(templateNode.attributes ?? {})
+    },
+    children: [],
+    source: {
+      path,
+      startOffset: -1,
+      endOpenTagOffset: -1,
+      line: -1,
+      column: -1,
+      startTag: templateNode.source?.startTag ?? buildSelfClosingStartTag(
+        templateNode.tag,
+        templateNode.attributes ?? {}
+      )
+    },
+    definitionKnown: templateNode.definitionKnown,
+    definition: templateNode.definition
+  };
+
+  clonedNode.children = (templateNode.children ?? []).map((child, index) =>
+    cloneImportedTreeNodeRecursive(child, [...path, index])
+  );
+
+  return clonedNode;
 }
 
 function createLocalChildNode(tagName, attributes, definition, path) {
@@ -1879,6 +2110,10 @@ function buildSelfClosingStartTag(tagName, attributes) {
 
 function findDefinitionById(id) {
   return treeNodeDefinitions.find((definition) => definition.id === id);
+}
+
+function findImportedBehaviorTreeById(id) {
+  return importedBehaviorTrees.find((tree) => tree.id === id);
 }
 
 function isValidXmlName(value) {
