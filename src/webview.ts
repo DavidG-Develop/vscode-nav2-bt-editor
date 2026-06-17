@@ -4,6 +4,7 @@ import { BtNode } from "./bt_parser";
 export type PreviewOptions = {
   openOnlyOneBehaviorTree: boolean;
   autoFitOnTreeChange: boolean;
+  allowEmptyAttributes: boolean;
 };
 
 export function getWebviewHtml(

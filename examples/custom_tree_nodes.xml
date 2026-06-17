@@ -1,0 +1,93 @@
+<root>
+  <TreeNodesModel>
+    <Condition ID="IsDoorClosed">
+      <input_port name="door_id"/>
+    </Condition>
+
+    <Condition ID="IsRobotLocalized">
+      <input_port name="map_frame"/>
+      <input_port name="base_frame"/>
+    </Condition>
+
+    <Action ID="OpenDoor">
+      <input_port name="door_id"/>
+      <input_port name="timeout"/>
+    </Action>
+
+    <Action ID="NavigateThroughDoor">
+      <input_port name="door_id"/>
+      <input_port name="goal"/>
+      <input_port name="planner_id"/>
+      <input_port name="controller_id"/>
+    </Action>
+
+    <Action ID="CloseDoor">
+      <input_port name="door_id"/>
+    </Action>
+
+    <Action ID="SpeakText">
+      <input_port name="text"/>
+      <input_port name="voice"/>
+    </Action>
+
+    <Decorator ID="RequireLocalization">
+      <input_port name="map_frame"/>
+      <input_port name="base_frame"/>
+    </Decorator>
+
+    <Control ID="DoorMissionSequence"/>
+
+    <Action ID="InitializeMission">
+      <input_port name="mission_id"/>
+    </Action>
+
+    <Action ID="FinalizeMission">
+      <input_port name="mission_id"/>
+    </Action>
+
+    <Action ID="ComputePathToPose">
+      <input_port name="goal"/>
+      <output_port name="path"/>
+      <input_port name="planner_id"/>
+    </Action>
+
+    <Action ID="FollowPath">
+      <input_port name="path"/>
+      <input_port name="controller_id"/>
+    </Action>
+
+    <Condition ID="IsDoorClosed">
+      <input_port name="door_id"/>
+    </Condition>
+
+    <Action ID="OpenDoor">
+      <input_port name="door_id"/>
+      <input_port name="timeout"/>
+    </Action>
+
+    <Action ID="NavigateThroughDoor">
+      <input_port name="door_id"/>
+      <input_port name="goal"/>
+    </Action>
+
+    <Action ID="CloseDoor">
+      <input_port name="door_id"/>
+    </Action>
+
+    <Action ID="ApproachDock">
+      <input_port name="docking_station"/>
+    </Action>
+
+    <Condition ID="IsDockAligned">
+      <input_port name="docking_station"/>
+    </Condition>
+
+    <Action ID="AlignToDock">
+      <input_port name="docking_station"/>
+    </Action>
+
+    <Action ID="DockRobot">
+      <input_port name="docking_station"/>
+    </Action>
+  </TreeNodesModel>
+</root>

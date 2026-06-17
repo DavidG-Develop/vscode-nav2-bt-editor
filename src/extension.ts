@@ -2,6 +2,7 @@ import * as vscode from "vscode";
 import {
   parseBehaviorTreeXml,
   parseTreeNodeDefinitionsFromXml,
+  TreeNodeDefinition,
   TreeNodeDefinitionMap,
   updateXmlAttributeByPath
 } from "./bt_parser";
@@ -54,6 +55,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
       let selectedPath: number[] | undefined;
       let refreshTimer: ReturnType<typeof setTimeout> | undefined;
+      let suppressDocumentRefreshUntil = 0;
 
       const panel = vscode.window.createWebviewPanel(
         "nav2BtPreview",
@@ -101,6 +103,17 @@ export function activate(context: vscode.ExtensionContext): void {
         }, 80);
       }
 
+      function suppressDocumentRefresh(milliseconds: number): void {
+        suppressDocumentRefreshUntil = Math.max(
+          suppressDocumentRefreshUntil,
+          Date.now() + milliseconds
+        );
+      }
+
+      function isDocumentRefreshSuppressed(): boolean {
+        return Date.now() < suppressDocumentRefreshUntil;
+      }
+
       previewRefreshers.add(scheduleUpdatePreview);
 
       panel.webview.onDidReceiveMessage(
@@ -118,16 +131,23 @@ export function activate(context: vscode.ExtensionContext): void {
           if (message.type === "updateAttribute") {
             selectedPath = message.path;
 
+            suppressDocumentRefresh(2500);
+
             const updated = await updateAttribute(targetDocument, message);
 
             if (!updated) {
+              suppressDocumentRefreshUntil = 0;
               return;
             }
 
             const autoSaveEdits = getAutoSaveEditsSetting(targetDocument.uri);
 
             if (autoSaveEdits) {
+              suppressDocumentRefresh(2500);
+
               const saved = await targetDocument.save();
+
+              suppressDocumentRefresh(2500);
 
               if (!saved) {
                 vscode.window.showWarningMessage(
@@ -136,7 +156,7 @@ export function activate(context: vscode.ExtensionContext): void {
               }
             }
 
-            scheduleUpdatePreview();
+            return;
           }
         },
         undefined,
@@ -147,9 +167,15 @@ export function activate(context: vscode.ExtensionContext): void {
 
       const changeSubscription = vscode.workspace.onDidChangeTextDocument(
         (event) => {
-          if (event.document.uri.toString() === targetDocument.uri.toString()) {
-            scheduleUpdatePreview();
+          if (event.document.uri.toString() !== targetDocument.uri.toString()) {
+            return;
           }
+
+          if (isDocumentRefreshSuppressed()) {
+            return;
+          }
+
+          scheduleUpdatePreview();
         }
       );
 
@@ -166,6 +192,10 @@ export function activate(context: vscode.ExtensionContext): void {
             ) ||
             event.affectsConfiguration(
               "nav2BtPreview.autoSaveEdits",
+              targetDocument.uri
+            ) ||
+            event.affectsConfiguration(
+              "nav2BtPreview.allowEmptyAttributes",
               targetDocument.uri
             )
           ) {
@@ -313,7 +343,10 @@ async function importTreeNodeDefinitionsFromText(
   sourceLabel: string,
   previewRefreshers: Set<() => void>
 ): Promise<void> {
-  const importedDefinitions = parseTreeNodeDefinitionsFromXml(xmlText);
+  const importedDefinitions = parseTreeNodeDefinitionsFromXml(
+    xmlText,
+    "imported"
+  );
   const importedCount = Object.keys(importedDefinitions).length;
 
   if (importedCount === 0) {
@@ -360,14 +393,19 @@ async function removeImportedTreeNodeDefinitions(
     return;
   }
 
-  const items: ImportedDefinitionQuickPickItem[] = entries.map(([nodeId, kind]) => {
-    return {
-      nodeId,
-      label: nodeId,
-      description: kind,
-      detail: `Imported ${kind} node definition`
-    };
-  });
+  const items: ImportedDefinitionQuickPickItem[] = entries.map(
+    ([nodeId, definition]) => {
+      return {
+        nodeId,
+        label: nodeId,
+        description: definition.kind,
+        detail:
+          definition.ports.length > 0
+            ? `Ports: ${definition.ports.map((port) => port.name).join(", ")}`
+            : "No ports defined"
+      };
+    }
+  );
 
   const selectedItems = await vscode.window.showQuickPick(items, {
     title: "Remove Imported TreeNode Definitions",
@@ -404,9 +442,50 @@ async function removeImportedTreeNodeDefinitions(
 function getImportedTreeNodeDefinitions(
   context: vscode.ExtensionContext
 ): TreeNodeDefinitionMap {
-  return context.globalState.get<TreeNodeDefinitionMap>(
+  const raw = context.globalState.get<Record<string, unknown>>(
     IMPORTED_TREE_NODE_DEFINITIONS_KEY,
     {}
+  );
+
+  const normalized: TreeNodeDefinitionMap = {};
+
+  for (const [id, value] of Object.entries(raw)) {
+    if (typeof value === "string") {
+      normalized[id] = {
+        id,
+        kind: value as TreeNodeDefinition["kind"],
+        ports: [],
+        source: "imported"
+      };
+      continue;
+    }
+
+    if (isTreeNodeDefinition(value)) {
+      normalized[id] = {
+        ...value,
+        id,
+        source: "imported"
+      };
+    }
+  }
+
+  return normalized;
+}
+
+function isTreeNodeDefinition(value: unknown): value is TreeNodeDefinition {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const maybe = value as Partial<TreeNodeDefinition>;
+
+  return (
+    typeof maybe.id === "string" &&
+    (maybe.kind === "control" ||
+      maybe.kind === "decorator" ||
+      maybe.kind === "condition" ||
+      maybe.kind === "action") &&
+    Array.isArray(maybe.ports)
   );
 }
 
@@ -453,6 +532,10 @@ function getPreviewOptions(resourceUri: vscode.Uri): PreviewOptions {
     autoFitOnTreeChange: configuration.get<boolean>(
       "autoFitOnTreeChange",
       true
+    ),
+    allowEmptyAttributes: configuration.get<boolean>(
+      "allowEmptyAttributes",
+      false
     )
   };
 }
@@ -461,6 +544,12 @@ function getAutoSaveEditsSetting(resourceUri: vscode.Uri): boolean {
   return vscode.workspace
     .getConfiguration("nav2BtPreview", resourceUri)
     .get<boolean>("autoSaveEdits", true);
+}
+
+function getAllowEmptyAttributesSetting(resourceUri: vscode.Uri): boolean {
+  return vscode.workspace
+    .getConfiguration("nav2BtPreview", resourceUri)
+    .get<boolean>("allowEmptyAttributes", false);
 }
 
 async function revealNode(
@@ -484,12 +573,19 @@ async function updateAttribute(
   message: Extract<WebviewMessage, { type: "updateAttribute" }>
 ): Promise<boolean> {
   const xmlText = document.getText();
+  const allowEmptyAttributes = getAllowEmptyAttributesSetting(document.uri);
+  const trimmedValue = message.attrValue.trim();
+
+  const attributeValue =
+    trimmedValue.length === 0 && !allowEmptyAttributes
+      ? undefined
+      : message.attrValue;
 
   const updatedXml = updateXmlAttributeByPath(
     xmlText,
     message.path,
     message.attrName,
-    message.attrValue
+    attributeValue
   );
 
   if (updatedXml === xmlText) {

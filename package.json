@@ -12,7 +12,11 @@
     "Other"
   ],
   "activationEvents": [
-    "onCommand:nav2-bt-preview.openPreview"
+    "onCommand:nav2-bt-preview.openPreview",
+    "onCommand:nav2-bt-preview.importTreeNodesModel",
+    "onCommand:nav2-bt-preview.importTreeNodesModelFromUrl",
+    "onCommand:nav2-bt-preview.removeImportedTreeNodeDefinition",
+    "onCommand:nav2-bt-preview.clearImportedTreeNodesModel"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -45,6 +49,11 @@
           "type": "boolean",
           "default": true,
           "description": "Automatically save the XML file after applying attribute changes from the behavior tree preview."
+        },
+        "nav2BtPreview.allowEmptyAttributes": {
+          "type": "boolean",
+          "default": false,
+          "description": "Allow empty XML attributes when applying edits. When false, empty attributes are removed from the XML."
         },
         "nav2BtPreview.openOnlyOneBehaviorTree": {
           "type": "boolean",

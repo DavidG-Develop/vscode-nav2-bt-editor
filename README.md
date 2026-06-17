@@ -1,98 +1,143 @@
 # Nav2 BT Preview
 
-Nav2 BT Preview is a Visual Studio Code extension for previewing and lightly editing ROS 2 Nav2 and BehaviorTree.CPP XML behavior trees.
+Nav2 BT Preview is a Visual Studio Code extension for viewing and editing ROS 2 Nav2 and BehaviorTree.CPP XML behavior trees.
 
-The extension renders behavior tree XML files as an interactive graph inside VS Code. It is intended for robotics developers working with Nav2 behavior trees, custom BehaviorTree.CPP nodes, and XML files containing `TreeNodesModel` definitions.
+It is intended for users who work with Nav2 behavior tree XML files, BehaviorTree.CPP XML files, custom behavior tree nodes, and `TreeNodesModel` node definition files.
 
 ## Features
 
-- Preview BehaviorTree.CPP-style XML files as an SVG graph.
-- Show BehaviorTree, Control, Decorator, Action, and Condition nodes with different visual styles.
-- Display node attributes in a side panel.
-- Edit existing XML attributes directly from the preview.
-- Add new XML attributes to nodes.
+- Preview BehaviorTree.CPP XML files as an interactive graph.
+- Show BehaviorTree, Control, Decorator, Action, Condition, and SubTree nodes with distinct visual styles.
+- Mark unknown node types directly in the graph.
+- Show a warning in the side panel when a node definition is unknown.
+- Edit XML attributes from the preview.
+- For known nodes, show attributes/ports defined by the node definition.
+- Only write non-empty known attributes back into the XML.
+- Add custom attributes for unknown nodes.
+- Add new child nodes to the XML tree.
+- Import external `TreeNodesModel` XML files.
+- Import external node definitions from URLs, including GitHub blob URLs.
+- Remember imported node definitions between VS Code sessions.
+- Remove selected imported node definitions without clearing everything.
+- Navigate between separate BehaviorTree definitions.
+- Expand and collapse SubTree nodes inline, depending on settings.
 - Reveal the selected node in the XML editor.
-- Parse `TreeNodesModel` sections inside the current XML file.
-- Import external `TreeNodesModel` XML files and remember the imported node definitions.
-- Import node definitions from a URL, including GitHub blob URLs.
-- List and remove individual imported node definitions.
-- Navigate between separate `BehaviorTree` definitions.
-- Expand and collapse `SubTree` nodes inline when configured.
-- Preserve or auto-fit the graph view depending on settings.
 
-## Usage
+## Installation
 
-Open an XML behavior tree file, then run:
+Install the extension from the Visual Studio Code Marketplace:
+
+1. Open Visual Studio Code.
+2. Open the Extensions view.
+3. Search for `Nav2 BT Preview`.
+4. Select the extension.
+5. Click Install.
+
+After installation, open a BehaviorTree.CPP XML file and run the preview command.
+
+## Opening a preview
+
+Open a behavior tree XML file and run:
 
 ```text
 Nav2 BT Preview: Open Preview
 ```
 
-You can run the command from the Command Palette or from the XML editor title/context menu.
+You can run this from the Command Palette.
 
-Click a node in the graph to show its details. The side panel shows:
+You can also right-click an XML file in the Explorer and select:
 
-- node type
-- node category
-- node name, if available
-- XML source preview
-- editable attributes
-- add-attribute controls
-
-Click `Apply` after editing an attribute to update the XML file.
-
-## Importing external node definitions
-
-Many Nav2 behavior tree XML files use custom nodes whose category cannot be inferred from the node tag alone. For example, a custom XML node may look like this:
-
-```xml
-<IsDoorClosed door_id="{door_id}"/>
+```text
+Nav2 BT Preview: Open Preview
 ```
 
-The node itself does not say whether it is an action, condition, decorator, or control node. That information is normally available in a `TreeNodesModel` XML file.
+## Editing attributes
 
-You can import such definitions with:
+Click a node in the graph to open the node details panel.
+
+For known nodes, the side panel shows the attributes/ports from the node definition. Fill in the values you want and apply the change. Empty fields are not written to the XML.
+
+For unknown nodes, the side panel shows that the node definition is unknown. Unknown nodes allow manual custom attributes because the extension does not know the expected ports.
+
+## Adding nodes
+
+Click the parent node where you want to add a child.
+
+Use the Add child node section in the details panel.
+
+You can select a known node type or type a custom node name. If the node is known, the extension shows its defined attributes/ports. Non-empty values are written into the XML when the node is added.
+
+If the node is unknown, it is inserted as a basic XML node. You can then select it and add custom attributes manually.
+
+## Unknown nodes
+
+A node is considered unknown when the extension cannot find a matching definition in:
+
+- the current XML file's `TreeNodesModel`
+- imported `TreeNodesModel` files
+- the built-in BehaviorTree.CPP/Nav2 node catalog
+
+Unknown nodes are marked in the graph and show a warning in the details panel.
+
+To improve classification, import a node definition file.
+
+## Importing node definitions
+
+Many Nav2 and custom BehaviorTree.CPP projects define nodes in a `TreeNodesModel` XML file.
+
+To import such a file, run:
 
 ```text
 Nav2 BT Preview: Import TreeNodesModel XML File
 ```
 
-or:
+To import from a URL, run:
 
 ```text
 Nav2 BT Preview: Import TreeNodesModel XML from URL
 ```
 
-For example, you can import a Nav2-style `nav2_tree_nodes.xml` file. GitHub blob URLs are converted to raw URLs automatically.
+GitHub blob URLs are converted to raw URLs automatically.
 
-Imported definitions are stored in VS Code extension global storage and are remembered between sessions. Imported definitions take priority over the built-in hardcoded catalog.
+Imported definitions are stored by the extension and remembered across VS Code sessions.
 
-To remove all imported definitions, run:
+If a node name exists both in the built-in catalog and imported definitions, the imported definition takes priority.
 
-```text
-Nav2 BT Preview: Clear Imported TreeNodesModel Definitions
-```
+## Managing imported definitions
 
-To remove individual imported definitions, run:
+To remove selected imported definitions, run:
 
 ```text
 Nav2 BT Preview: Remove Imported TreeNode Definition
 ```
 
-This opens a list of imported node definitions. Select one or more entries to remove them.
+This opens a list of all imported node definitions. Select one or more definitions to remove.
 
-## SubTree behavior
-
-By default, the extension shows only one `BehaviorTree` at a time.
-
-When a graph contains a `SubTree` node, double-clicking the `SubTree` opens the referenced `BehaviorTree`. The previously open tree is closed. Use the toolbar buttons to navigate:
+To clear all imported definitions, run:
 
 ```text
-↑   Go one BehaviorTree up
-Top Go back to the top-level BehaviorTree
+Nav2 BT Preview: Clear Imported TreeNodesModel Definitions
 ```
 
-You can also configure the extension to allow inline subtree expansion.
+## SubTree navigation and expansion
+
+By default, only one `BehaviorTree` is shown at a time.
+
+Double-click a `SubTree` node to open the referenced `BehaviorTree`.
+
+The toolbar contains:
+
+```text
+↑     Go one BehaviorTree up
+Top   Go back to the top-level BehaviorTree
+Fit   Fit the current graph into the preview
++     Zoom in
+-     Zoom out
+```
+
+If inline subtree expansion is enabled, subtrees are closed by default. Double-click a `SubTree` to expand it inline. Double-click it again to collapse it.
+
+Nested subtrees are not expanded automatically. Each subtree instance must be expanded manually.
 
 ## Settings
 
@@ -104,7 +149,7 @@ Default:
 true
 ```
 
-When enabled, XML files are saved automatically after applying attribute edits from the preview.
+Automatically save the XML file after applying attribute edits from the preview.
 
 When disabled, the editor buffer is updated but the file remains unsaved until you save it manually.
 
@@ -116,11 +161,9 @@ Default:
 true
 ```
 
-When enabled, only one `BehaviorTree` is shown at a time. Double-clicking a `SubTree` opens the referenced tree.
+When enabled, only one `BehaviorTree` is shown at a time.
 
-When disabled, `SubTree` nodes can be expanded inline in the same graph. Subtrees are still closed by default. Double-click a `SubTree` to expand it, and double-click it again to collapse it.
-
-Nested subtrees are not expanded automatically. Each subtree instance must be expanded manually.
+When disabled, `SubTree` nodes can be expanded inline in the same graph.
 
 ### `nav2BtPreview.autoFitOnTreeChange`
 
@@ -134,72 +177,23 @@ When enabled, the graph view is automatically fitted after opening, closing, or 
 
 When disabled, subtree open and close operations keep the current zoom and pan unchanged.
 
-## Example settings
+## Commands
 
-```json
-{
-  "nav2BtPreview.autoSaveEdits": true,
-  "nav2BtPreview.openOnlyOneBehaviorTree": true,
-  "nav2BtPreview.autoFitOnTreeChange": true
-}
-```
-
-For inline subtree expansion without automatic zoom or pan changes:
-
-```json
-{
-  "nav2BtPreview.openOnlyOneBehaviorTree": false,
-  "nav2BtPreview.autoFitOnTreeChange": false
-}
-```
-
-## Development
-
-Install dependencies:
-
-```bash
-npm install
-```
-
-Compile:
-
-```bash
-npm run compile
-```
-
-Run the extension in the Extension Development Host:
-
-```text
-F5
-```
-
-Package the extension:
-
-```bash
-npm run package
-```
-
-## Project status
-
-This extension is experimental and currently focused on previewing and simple XML attribute editing. It is not yet a full behavior tree editor.
-
-Planned or possible future improvements include:
-
-- drag-and-drop node editing
-- adding and removing nodes
-- better port visualization
-- better subtree navigation breadcrumbs
-- workspace-level custom node definition files
-- validation against BehaviorTree.CPP XML schemas
-- improved Nav2 node catalog coverage
+| Command | Description |
+|---|---|
+| `Nav2 BT Preview: Open Preview` | Open the behavior tree preview for the selected XML file. |
+| `Nav2 BT Preview: Import TreeNodesModel XML File` | Import node definitions from a local XML file. |
+| `Nav2 BT Preview: Import TreeNodesModel XML from URL` | Import node definitions from a URL. |
+| `Nav2 BT Preview: Remove Imported TreeNode Definition` | Show imported definitions and remove selected entries. |
+| `Nav2 BT Preview: Clear Imported TreeNodesModel Definitions` | Remove all imported node definitions. |
 
 ## Relationship to other projects
 
-This extension is an independent VS Code previewer for BehaviorTree.CPP-style XML behavior trees, with a focus on ROS 2 and Nav2 workflows.
+Nav2 BT Preview is an independent Visual Studio Code extension for BehaviorTree.CPP-style XML behavior trees, with a focus on ROS 2 and Nav2 workflows.
 
 It is not affiliated with or endorsed by Groot, Groot2, BehaviorTree.CPP, Open Navigation LLC, or the Navigation2 project.
 
-The extension does not bundle Groot, Groot2, BehaviorTree.CPP, or Nav2 source code. It uses a built-in catalog of common BehaviorTree.CPP and Nav2 node names, and it can import external `TreeNodesModel` XML files to improve visualization of custom nodes.
+The extension does not bundle Groot, Groot2, BehaviorTree.CPP, or Nav2 source code. It uses a built-in catalog of common BehaviorTree.CPP and Nav2 node names and can import external `TreeNodesModel` XML files to improve visualization of custom nodes.
 
 ## License
 

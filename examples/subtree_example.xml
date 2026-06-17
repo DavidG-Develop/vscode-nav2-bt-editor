@@ -23,8 +23,8 @@
       </Sequence>
 
       <Sequence name="OpenAndTraverseDoorSequence">
-        <RetryUntilSuccessful num_attempts="3" name="RetryDoorOpening">
-          <OpenDoor door_id="{door_id}" timeout="5.0"/>
+        <RetryUntilSuccessful num_attempts="4" name="RetryDoorOpening">
+          <OpenDoor door_id="{door_id}"/>
         </RetryUntilSuccessful>
 
         <NavigateThroughDoor door_id="{door_id}" goal="{goal}"/>

@@ -1,4 +1,24 @@
+import { BUILTIN_NODE_DEFINITIONS } from "./builtin_node_definitions";
+
 export type BtNodeKind = "control" | "decorator" | "condition" | "action";
+
+export type TreeNodePortDirection = "input" | "output" | "inout";
+
+export type TreeNodePort = {
+  name: string;
+  direction: TreeNodePortDirection;
+};
+
+export type TreeNodeDefinitionSource = "builtin" | "imported" | "xml";
+
+export type TreeNodeDefinition = {
+  id: string;
+  kind: BtNodeKind;
+  ports: TreeNodePort[];
+  source: TreeNodeDefinitionSource;
+};
+
+export type TreeNodeDefinitionMap = Record<string, TreeNodeDefinition>;
 
 export type BtNodeSource = {
   path: number[];
@@ -17,155 +37,61 @@ export type BtNode = {
   attributes: Record<string, string>;
   children: BtNode[];
   source: BtNodeSource;
+  definitionKnown: boolean;
+  definition?: TreeNodeDefinition;
 };
 
-export type TreeNodeDefinitionMap = Record<string, BtNodeKind>;
-
-type InternalXmlNode = Omit<BtNode, "kind" | "children"> & {
+type InternalXmlNode = Omit<
+  BtNode,
+  "kind" | "children" | "definitionKnown" | "definition"
+> & {
   kind?: BtNodeKind;
   parent?: InternalXmlNode;
   children: InternalXmlNode[];
 };
 
-type TreeNodeModelCatalog = Map<string, BtNodeKind>;
-
-const BUILTIN_CONTROL_NODES = new Set([
-  "BehaviorTree",
-
-  "Sequence",
-  "AsyncSequence",
-  "SequenceStar",
-  "SequenceWithMemory",
-  "ReactiveSequence",
-  "Fallback",
-  "AsyncFallback",
-  "Selector",
-  "ReactiveFallback",
-  "Parallel",
-  "ParallelAll",
-  "IfThenElse",
-  "WhileDoElse",
-  "Switch2",
-  "Switch3",
-  "Switch4",
-  "Switch5",
-  "Switch6",
-
-  "PipelineSequence",
-  "RecoveryNode",
-  "RoundRobin",
-  "NonblockingSequence",
-  "PersistentSequence",
-  "PauseResumeController"
-]);
-
-const BUILTIN_DECORATOR_NODES = new Set([
-  "Inverter",
-  "ForceSuccess",
-  "ForceFailure",
-  "Repeat",
-  "RetryUntilSuccessful",
-  "RetryUntilSuccesful",
-  "KeepRunningUntilFailure",
-  "Delay",
-  "Timeout",
-  "RunOnce",
-  "Precondition",
-  "SubTree",
-  "SubTreePlus",
-
-  "RateController",
-  "DistanceController",
-  "SpeedController",
-  "GoalUpdater",
-  "GoalUpdatedController",
-  "SingleTrigger",
-  "PathLongerOnApproach"
-]);
-
-const BUILTIN_CONDITION_NODES = new Set([
-  "AlwaysSuccess",
-  "AlwaysFailure",
-  "ScriptCondition",
-
-  "AreErrorCodesPresent",
-  "ArePosesNear",
-  "DistanceTraveled",
-  "GloballyUpdatedGoal",
-  "GoalReached",
-  "GoalUpdated",
-  "InitialPoseReceived",
-  "IsBatteryCharging",
-  "IsBatteryLow",
-  "IsGoalNearby",
-  "IsPathValid",
-  "IsStuck",
-  "IsWithinPathTrackingBounds",
-  "PathExpiringTimer",
-  "TimeExpired",
-  "TransformAvailable",
-  "WouldAControllerRecoveryHelp",
-  "WouldAPlannerRecoveryHelp",
-  "WouldARouteRecoveryHelp",
-  "WouldASmootherRecoveryHelp"
-]);
-
-const BUILTIN_ACTION_NODES = new Set([
-  "SetBlackboard",
-  "UnsetBlackboard",
-  "Script",
-  "Sleep",
-
-  "AppendGoalPoseToGoals",
-  "AssistedTeleop",
-  "CancelAssistedTeleop",
-  "AssistedTeleopCancel",
-  "BackUp",
-  "CancelBackUp",
-  "BackUpCancel",
-  "ClearEntireCostmap",
-  "ClearCostmapAroundRobot",
-  "ClearCostmapExceptRegion",
-  "ComputeAndTrackRoute",
-  "CancelComputeAndTrackRoute",
-  "ComputeAndTrackRouteCancel",
-  "ComputePathThroughPoses",
-  "ComputePathToPose",
-  "ComputeRoute",
-  "ConcatenatePaths",
-  "CancelControl",
-  "ControllerCancel",
-  "ControllerSelector",
-  "DriveOnHeading",
-  "CancelDriveOnHeading",
-  "DriveOnHeadingCancel",
-  "ExtractRouteNodesAsGoals",
-  "FollowPath",
-  "FollowObject",
-  "GetCurrentPose",
-  "GetNextFewGoals",
-  "GetPoseFromPath",
-  "GoalCheckerSelector",
-  "NavigateThroughPoses",
-  "NavigateToPose",
-  "PlannerSelector",
-  "ProgressCheckerSelector",
-  "ReinitializeGlobalLocalization",
-  "RemoveInCollisionGoals",
-  "RemovePassedGoals",
-  "SmoothPath",
-  "SmootherSelector",
-  "Spin",
-  "CancelSpin",
-  "SpinCancel",
-  "TruncatePath",
-  "TruncatePathLocal",
-  "Wait",
-  "CancelWait",
-  "WaitCancel"
-]);
+type TreeNodeModelCatalog = Map<string, TreeNodeDefinition>;
 
 let nextId = 0;
+
+function inputPorts(...names: string[]): TreeNodePort[] {
+  return names.map((name) => {
+    return {
+      name,
+      direction: "input"
+    };
+  });
+}
+
+function withCommonPorts(
+  nodeId: string,
+  ports: TreeNodePort[]
+): TreeNodePort[] {
+  if (nodeId === "BehaviorTree") {
+    return ensurePorts(ports, inputPorts("ID"));
+  }
+
+  if (nodeId === "SubTree" || nodeId === "SubTreePlus") {
+    return ensurePorts(ports, inputPorts("ID", "_autoremap"));
+  }
+
+  return ensurePorts(ports, inputPorts("name"));
+}
+
+function ensurePorts(
+  ports: TreeNodePort[],
+  requiredPorts: TreeNodePort[]
+): TreeNodePort[] {
+  const existingNames = new Set(ports.map((port) => port.name));
+  const missingPorts = requiredPorts.filter(
+    (port) => !existingNames.has(port.name)
+  );
+
+  return [
+    ...missingPorts,
+    ...ports
+  ];
+}
 
 function makeId(): string {
   nextId += 1;
@@ -193,25 +119,24 @@ export function parseBehaviorTreeXml(
 }
 
 export function parseTreeNodeDefinitionsFromXml(
-  xmlText: string
+  xmlText: string,
+  source: TreeNodeDefinitionSource = "xml"
 ): TreeNodeDefinitionMap {
   const roots = scanXml(xmlText);
-  const catalog = buildTreeNodesModelCatalog(roots, {});
+  const catalog = new Map<string, TreeNodeDefinition>();
 
-  const definitions: TreeNodeDefinitionMap = {};
-
-  for (const [id, kind] of catalog.entries()) {
-    definitions[id] = kind;
+  for (const root of roots) {
+    collectTreeNodesModelEntries(root, catalog, source);
   }
 
-  return definitions;
+  return Object.fromEntries(catalog.entries());
 }
 
 export function updateXmlAttributeByPath(
   xmlText: string,
   path: number[],
   attributeName: string,
-  attributeValue: string
+  attributeValue: string | undefined
 ): string {
   const roots = scanXml(xmlText);
   const target = findNodeByPath(roots, path);
@@ -224,19 +149,166 @@ export function updateXmlAttributeByPath(
   const end = target.source.endOpenTagOffset;
   const openTag = xmlText.slice(start, end);
 
-  const updatedOpenTag = setAttributeInOpenTag(
-    openTag,
-    attributeName,
-    attributeValue
-  );
+  const updatedOpenTag =
+    attributeValue === undefined
+      ? removeAttributeFromOpenTag(openTag, attributeName)
+      : setAttributeInOpenTag(openTag, attributeName, attributeValue);
 
   return xmlText.slice(0, start) + updatedOpenTag + xmlText.slice(end);
+}
+
+function buildTreeNodesModelCatalog(
+  roots: InternalXmlNode[],
+  externalDefinitions: TreeNodeDefinitionMap
+): TreeNodeModelCatalog {
+  const catalog: TreeNodeModelCatalog = new Map();
+
+  addBuiltinDefinitions(catalog);
+
+  for (const definition of Object.values(externalDefinitions)) {
+    catalog.set(definition.id, {
+      ...definition,
+      source: "imported",
+      ports: withCommonPorts(definition.id, definition.ports ?? [])
+    });
+  }
+
+  for (const root of roots) {
+    collectTreeNodesModelEntries(root, catalog, "xml");
+  }
+
+  return catalog;
+}
+
+function addBuiltinDefinitions(catalog: TreeNodeModelCatalog): void {
+  for (const definition of BUILTIN_NODE_DEFINITIONS) {
+    catalog.set(definition.id, definition);
+  }
+}
+
+function collectTreeNodesModelEntries(
+  node: InternalXmlNode,
+  catalog: TreeNodeModelCatalog,
+  source: TreeNodeDefinitionSource
+): void {
+  if (node.tag === "TreeNodesModel") {
+    for (const child of node.children) {
+      const kind = modelTagToKind(child.tag);
+      const id = child.attributes["ID"];
+
+      if (kind && id) {
+        catalog.set(id, {
+          id,
+          kind,
+          source,
+          ports: withCommonPorts(id, collectPorts(child))
+        });
+      }
+    }
+
+    return;
+  }
+
+  for (const child of node.children) {
+    collectTreeNodesModelEntries(child, catalog, source);
+  }
+}
+
+function collectPorts(node: InternalXmlNode): TreeNodePort[] {
+  const ports: TreeNodePort[] = [];
+
+  for (const child of node.children) {
+    const direction = portTagToDirection(child.tag);
+    const name = child.attributes["name"];
+
+    if (!direction || !name) {
+      continue;
+    }
+
+    ports.push({
+      name,
+      direction
+    });
+  }
+
+  return ports;
+}
+
+function portTagToDirection(tag: string): TreeNodePortDirection | undefined {
+  if (tag === "input_port") {
+    return "input";
+  }
+
+  if (tag === "output_port") {
+    return "output";
+  }
+
+  if (tag === "inout_port") {
+    return "inout";
+  }
+
+  return undefined;
+}
+
+function modelTagToKind(tag: string): BtNodeKind | undefined {
+  if (tag === "Control") {
+    return "control";
+  }
+
+  if (tag === "Decorator") {
+    return "decorator";
+  }
+
+  if (tag === "Condition") {
+    return "condition";
+  }
+
+  if (tag === "Action") {
+    return "action";
+  }
+
+  return undefined;
+}
+
+function stripInternalFields(
+  node: InternalXmlNode,
+  modelCatalog: TreeNodeModelCatalog
+): BtNode {
+  const definition = modelCatalog.get(node.tag);
+  const kind = definition?.kind ?? "action";
+
+  return {
+    id: node.id,
+    tag: node.tag,
+    kind,
+    name: node.name,
+    attributes: node.attributes,
+    source: node.source,
+    definitionKnown: Boolean(definition),
+    definition,
+    children: node.children.map((child) =>
+      stripInternalFields(child, modelCatalog)
+    )
+  };
+}
+
+function collectBehaviorTrees(
+  node: InternalXmlNode,
+  output: InternalXmlNode[]
+): void {
+  if (node.tag === "BehaviorTree") {
+    output.push(node);
+    return;
+  }
+
+  for (const child of node.children) {
+    collectBehaviorTrees(child, output);
+  }
 }
 
 function scanXml(xmlText: string): InternalXmlNode[] {
   const roots: InternalXmlNode[] = [];
   const stack: InternalXmlNode[] = [];
-
   let index = 0;
 
   while (index < xmlText.length) {
@@ -333,125 +405,6 @@ function scanXml(xmlText: string): InternalXmlNode[] {
   }
 
   return roots;
-}
-
-function buildTreeNodesModelCatalog(
-  roots: InternalXmlNode[],
-  externalDefinitions: TreeNodeDefinitionMap
-): TreeNodeModelCatalog {
-  const catalog: TreeNodeModelCatalog = new Map();
-
-  for (const [id, kind] of Object.entries(externalDefinitions)) {
-    catalog.set(id, kind);
-  }
-
-  for (const root of roots) {
-    collectTreeNodesModelEntries(root, catalog);
-  }
-
-  return catalog;
-}
-
-function collectTreeNodesModelEntries(
-  node: InternalXmlNode,
-  catalog: TreeNodeModelCatalog
-): void {
-  if (node.tag === "TreeNodesModel") {
-    for (const child of node.children) {
-      const kind = modelTagToKind(child.tag);
-      const id = child.attributes["ID"];
-
-      if (kind && id) {
-        catalog.set(id, kind);
-      }
-    }
-
-    return;
-  }
-
-  for (const child of node.children) {
-    collectTreeNodesModelEntries(child, catalog);
-  }
-}
-
-function modelTagToKind(tag: string): BtNodeKind | undefined {
-  if (tag === "Control") {
-    return "control";
-  }
-
-  if (tag === "Decorator") {
-    return "decorator";
-  }
-
-  if (tag === "Condition") {
-    return "condition";
-  }
-
-  if (tag === "Action") {
-    return "action";
-  }
-
-  return undefined;
-}
-
-function stripInternalFields(
-  node: InternalXmlNode,
-  modelCatalog: TreeNodeModelCatalog
-): BtNode {
-  return {
-    id: node.id,
-    tag: node.tag,
-    kind: getNodeKind(node.tag, modelCatalog),
-    name: node.name,
-    attributes: node.attributes,
-    source: node.source,
-    children: node.children.map((child) =>
-      stripInternalFields(child, modelCatalog)
-    )
-  };
-}
-
-function getNodeKind(
-  tag: string,
-  modelCatalog: TreeNodeModelCatalog
-): BtNodeKind {
-  const modelKind = modelCatalog.get(tag);
-
-  if (modelKind) {
-    return modelKind;
-  }
-
-  if (BUILTIN_CONTROL_NODES.has(tag)) {
-    return "control";
-  }
-
-  if (BUILTIN_DECORATOR_NODES.has(tag)) {
-    return "decorator";
-  }
-
-  if (BUILTIN_CONDITION_NODES.has(tag)) {
-    return "condition";
-  }
-
-  if (BUILTIN_ACTION_NODES.has(tag)) {
-    return "action";
-  }
-
-  return "action";
-}
-
-function collectBehaviorTrees(
-  node: InternalXmlNode,
-  output: InternalXmlNode[]
-): void {
-  if (node.tag === "BehaviorTree") {
-    output.push(node);
-    return;
-  }
-
-  for (const child of node.children) {
-    collectBehaviorTrees(child, output);
-  }
 }
 
 function findNodeByPath(
@@ -553,6 +506,18 @@ function setAttributeInOpenTag(
   }
 
   return openTag.replace(/\s*>$/, `${insertText}>`);
+}
+
+function removeAttributeFromOpenTag(
+  openTag: string,
+  attributeName: string
+): string {
+  const escapedName = escapeRegex(attributeName);
+  const attributeRegex = new RegExp(
+    `\\s${escapedName}\\s*=\\s*(["'])[\\s\\S]*?\\1`
+  );
+
+  return openTag.replace(attributeRegex, "");
 }
 
 function encodeXmlAttribute(value: string, quote: string): string {

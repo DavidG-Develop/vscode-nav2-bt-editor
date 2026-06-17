@@ -6,6 +6,8 @@ const openOnlyOneBehaviorTree =
   previewOptions.openOnlyOneBehaviorTree !== false;
 const autoFitOnTreeChange =
   previewOptions.autoFitOnTreeChange !== false;
+const allowEmptyAttributes =
+  previewOptions.allowEmptyAttributes === true;
 
 let selectedNodePath = window.initialSelectedPath ?? undefined;
 let selectedNodeId = undefined;
@@ -153,6 +155,61 @@ function renderTree() {
   }
 }
 
+function buildLayoutTree(node, expansionStack) {
+  const kind = node.kind ?? "action";
+  const visualKind = getVisualKind(node);
+  const size = getNodeSize(node, kind, visualKind);
+  const subTreeKey = getSubTreeExpansionKey(node);
+
+  const layoutNode = {
+    ...node,
+    kind,
+    visualKind,
+    subTreeKey,
+    width: size.width,
+    height: size.height,
+    subtreeWidth: 0,
+    x: 0,
+    y: 0,
+    inlineExpanded: false,
+    inlineCycle: false,
+    children: []
+  };
+
+  if (
+    !openOnlyOneBehaviorTree &&
+    isSubTreeNode(node) &&
+    subTreeKey &&
+    expandedSubTreeKeys.has(subTreeKey)
+  ) {
+    const targetId = node.attributes?.ID;
+    const targetTree = targetId ? findBehaviorTreeById(nodes, targetId) : undefined;
+
+    if (targetTree) {
+      if (expansionStack.has(targetId)) {
+        layoutNode.inlineCycle = true;
+        return layoutNode;
+      }
+
+      const nextStack = new Set(expansionStack);
+      nextStack.add(targetId);
+
+      layoutNode.inlineExpanded = true;
+      layoutNode.children = (targetTree.children ?? []).map((child) =>
+        buildLayoutTree(child, nextStack)
+      );
+
+      return layoutNode;
+    }
+  }
+
+  layoutNode.children = (node.children ?? []).map((child) =>
+    buildLayoutTree(child, expansionStack)
+  );
+
+  return layoutNode;
+}
+
 function findPreferredTopRoot(roots) {
   const mainTree = roots.find((node) => {
     return node.tag === "BehaviorTree" && node.attributes?.ID === "MainTree";
@@ -246,61 +303,6 @@ function applyPostTreeChangeView() {
   }
 }
 
-function buildLayoutTree(node, expansionStack) {
-  const kind = node.kind ?? "action";
-  const visualKind = getVisualKind(node);
-  const size = getNodeSize(node, kind, visualKind);
-  const subTreeKey = getSubTreeExpansionKey(node);
-
-  const layoutNode = {
-    ...node,
-    kind,
-    visualKind,
-    subTreeKey,
-    width: size.width,
-    height: size.height,
-    subtreeWidth: 0,
-    x: 0,
-    y: 0,
-    inlineExpanded: false,
-    inlineCycle: false,
-    children: []
-  };
-
-  if (
-    !openOnlyOneBehaviorTree &&
-    isSubTreeNode(node) &&
-    subTreeKey &&
-    expandedSubTreeKeys.has(subTreeKey)
-  ) {
-    const targetId = node.attributes?.ID;
-    const targetTree = targetId ? findBehaviorTreeById(nodes, targetId) : undefined;
-
-    if (targetTree) {
-      if (expansionStack.has(targetId)) {
-        layoutNode.inlineCycle = true;
-        return layoutNode;
-      }
-
-      const nextStack = new Set(expansionStack);
-      nextStack.add(targetId);
-
-      layoutNode.inlineExpanded = true;
-      layoutNode.children = (targetTree.children ?? []).map((child) =>
-        buildLayoutTree(child, nextStack)
-      );
-
-      return layoutNode;
-    }
-  }
-
-  layoutNode.children = (node.children ?? []).map((child) =>
-    buildLayoutTree(child, expansionStack)
-  );
-
-  return layoutNode;
-}
-
 function getVisualKind(node) {
   if (node.tag === "BehaviorTree") {
     return "tree";
@@ -387,15 +389,7 @@ function getSecondaryLabel(node) {
   return "";
 }
 
-function isDisplayNameAttribute(node, key, value) {
-  if (key === "name") {
-    return true;
-  }
-
-  if (key === "ID" && node.name === value) {
-    return true;
-  }
-
+function isDisplayNameAttribute() {
   return false;
 }
 
@@ -405,6 +399,10 @@ function getVisibleAttributes(node) {
   return Object.entries(attrs).filter(([key, value]) => {
     return !isDisplayNameAttribute(node, key, value);
   });
+}
+
+function getKnownPortNames(node) {
+  return new Set((node.definition?.ports ?? []).map((port) => port.name));
 }
 
 function isSubTreeNode(node) {
@@ -579,6 +577,10 @@ function drawNodes(parent, node) {
   const group = document.createElementNS("http://www.w3.org/2000/svg", "g");
   group.setAttribute("class", `bt-node-group kind-${node.kind} visual-${node.visualKind}`);
 
+  if (!node.definitionKnown) {
+    group.classList.add("unknown-node");
+  }
+
   if (node.inlineExpanded) {
     group.classList.add("inline-expanded");
   }
@@ -619,6 +621,10 @@ function drawNodes(parent, node) {
 
   drawNodeShape(group, node);
   appendNodeText(group, node);
+
+  if (!node.definitionKnown) {
+    appendUnknownBadge(group, node);
+  }
 
   if (isSubTreeNode(node)) {
     appendSubTreeHint(group, node);
@@ -696,6 +702,27 @@ function appendNodeText(group, node) {
   });
 }
 
+function appendUnknownBadge(group, node) {
+  const cx = node.x + node.width / 2 - 12;
+  const cy = node.y - node.height / 2 + 12;
+
+  const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+  circle.setAttribute("cx", String(cx));
+  circle.setAttribute("cy", String(cy));
+  circle.setAttribute("r", "10");
+  circle.setAttribute("class", "unknown-badge-circle");
+
+  const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+  text.setAttribute("x", String(cx));
+  text.setAttribute("y", String(cy + 1));
+  text.setAttribute("text-anchor", "middle");
+  text.setAttribute("class", "unknown-badge-text");
+  text.textContent = "?";
+
+  group.appendChild(circle);
+  group.appendChild(text);
+}
+
 function appendSubTreeHint(group, node) {
   const hint = document.createElementNS("http://www.w3.org/2000/svg", "text");
   hint.setAttribute("x", String(node.x));
@@ -741,6 +768,361 @@ function selectNode(node, center) {
       }
     });
   }
+}
+
+function renderDetails(node) {
+  const source = node.source;
+  const definition = node.definition;
+  const visibleAttributes = getVisibleAttributes(node);
+  const knownPortNames = getKnownPortNames(node);
+  const extraAttributes = visibleAttributes.filter(([key]) => !knownPortNames.has(key));
+
+  detailsContainer.classList.remove("empty");
+
+  detailsContainer.innerHTML = `
+    <p><strong>Type:</strong> ${escapeHtml(node.tag)}</p>
+    <p><strong>Category:</strong> ${escapeHtml(node.kind)}</p>
+    ${
+      node.name
+        ? `<p><strong>Name:</strong> ${escapeHtml(node.name)}</p>`
+        : ""
+    }
+    ${
+      definition
+        ? `<p><strong>Definition:</strong> ${escapeHtml(definition.source)}</p>`
+        : ""
+    }
+    ${
+      !node.definitionKnown
+        ? `
+          <div class="warning-box">
+            <strong>Unknown node definition.</strong><br>
+            This node was not found in the current XML TreeNodesModel, imported definitions, or built-in catalog.
+            Import a TreeNodesModel XML file to classify this node and show its expected attributes.
+          </div>
+        `
+        : ""
+    }
+    ${
+      node.definitionKnown && definition && definition.ports.length === 0
+        ? `
+          <div class="info-box">
+            No defined attributes for this node.
+          </div>
+        `
+        : ""
+    }
+    ${
+      allowEmptyAttributes
+        ? `<div class="info-box">Empty attributes are allowed and will be written as empty XML attributes.</div>`
+        : `<div class="info-box">Empty attributes are removed from the XML when applied.</div>`
+    }
+
+    <div class="xml-section">
+      <h3>XML</h3>
+      ${
+        source
+          ? `
+            <p class="source-location">
+              Line ${source.line + 1}, column ${source.column + 1}
+            </p>
+            <pre class="xml-preview">${escapeHtml(source.startTag)}</pre>
+            <button id="reveal-node-button">Reveal in XML</button>
+          `
+          : `<p class="empty">No XML source information available.</p>`
+      }
+    </div>
+
+    ${renderAttributeSections(node, definition, extraAttributes)}
+  `;
+
+  const revealButton = document.getElementById("reveal-node-button");
+
+  if (revealButton && source) {
+    revealButton.addEventListener("click", () => {
+      vscode.postMessage({
+        type: "revealNode",
+        startOffset: source.startOffset
+      });
+    });
+  }
+
+  attachAttributeHandlers(node);
+}
+
+function renderAttributeSections(node, definition, extraAttributes) {
+  const sections = [];
+
+  if (definition?.ports?.length > 0) {
+    sections.push(`
+      <h3>Defined attributes</h3>
+      <table class="attr-table">
+        ${definition.ports
+          .map((port) =>
+            renderAttributeRow(
+              port.name,
+              node.attributes?.[port.name] ?? "",
+              port.direction
+            )
+          )
+          .join("")}
+      </table>
+    `);
+  }
+
+  if (extraAttributes.length > 0) {
+    sections.push(`
+      <h3>${node.definitionKnown ? "Additional XML attributes" : "Attributes"}</h3>
+      <table class="attr-table">
+        ${extraAttributes
+          .map(([key, value]) => renderAttributeRow(key, value, undefined))
+          .join("")}
+      </table>
+    `);
+  } else if (node.definitionKnown && definition?.ports?.length === 0) {
+    sections.push(`<p class="empty">No defined attributes on this node.</p>`);
+  } else if (!definition?.ports?.length) {
+    sections.push(`<p class="empty">No attributes on this node.</p>`);
+  }
+
+  if (!node.definitionKnown) {
+    sections.push(`
+      <h3>Add custom attribute</h3>
+      <div class="add-attr-row">
+        <input id="new-attr-name" placeholder="attribute name" />
+        <input id="new-attr-value" placeholder="value" />
+        <button id="add-attr-button">Add</button>
+      </div>
+    `);
+  }
+
+  return sections.join("");
+}
+
+function renderAttributeRow(name, value, direction) {
+  return `
+    <tr>
+      <td class="attr-name">
+        ${escapeHtml(name)}
+        ${
+          direction
+            ? `<div class="attr-port-direction">${escapeHtml(direction)}</div>`
+            : ""
+        }
+      </td>
+      <td>
+        <input
+          class="attr-input"
+          data-attr-name="${escapeHtml(name)}"
+          value="${escapeHtml(String(value))}"
+        />
+      </td>
+      <td>
+        <button
+          class="attr-apply-button"
+          data-attr-name="${escapeHtml(name)}"
+        >
+          Apply
+        </button>
+      </td>
+    </tr>
+  `;
+}
+
+function attachAttributeHandlers(node) {
+  for (const button of document.querySelectorAll(".attr-apply-button")) {
+    button.addEventListener("click", () => {
+      const attrName = button.getAttribute("data-attr-name");
+
+      if (!attrName) {
+        return;
+      }
+
+      const input = document.querySelector(
+        `.attr-input[data-attr-name="${cssEscape(attrName)}"]`
+      );
+
+      if (!input) {
+        return;
+      }
+
+      applyLocalAttributeUpdate(node, attrName, input.value);
+
+      vscode.postMessage({
+        type: "updateAttribute",
+        path: node.source.path,
+        attrName,
+        attrValue: input.value
+      });
+    });
+  }
+
+  const addButton = document.getElementById("add-attr-button");
+
+  if (addButton) {
+    addButton.addEventListener("click", () => {
+      const nameInput = document.getElementById("new-attr-name");
+      const valueInput = document.getElementById("new-attr-value");
+
+      const attrName = nameInput?.value?.trim() ?? "";
+      const attrValue = valueInput?.value ?? "";
+
+      if (!attrName) {
+        return;
+      }
+
+      if (attrName === "name") {
+        return;
+      }
+
+      applyLocalAttributeUpdate(node, attrName, attrValue);
+
+      vscode.postMessage({
+        type: "updateAttribute",
+        path: node.source.path,
+        attrName,
+        attrValue
+      });
+    });
+  }
+}
+
+function applyLocalAttributeUpdate(node, attrName, attrValue) {
+  const shouldRemoveAttribute =
+    attrValue.trim().length === 0 && !allowEmptyAttributes;
+
+  const matchingNodes = findAllNodesByPath(nodes, node.source?.path);
+
+  for (const matchingNode of matchingNodes) {
+    if (!matchingNode.attributes) {
+      matchingNode.attributes = {};
+    }
+
+    if (shouldRemoveAttribute) {
+      delete matchingNode.attributes[attrName];
+    } else {
+      matchingNode.attributes[attrName] = attrValue;
+    }
+
+    if (matchingNode.source?.startTag) {
+      matchingNode.source.startTag = shouldRemoveAttribute
+        ? removeAttributeFromOpenTag(matchingNode.source.startTag, attrName)
+        : setAttributeInOpenTag(
+            matchingNode.source.startTag,
+            attrName,
+            attrValue
+          );
+    }
+
+    matchingNode.name =
+      matchingNode.attributes?.name ??
+      matchingNode.attributes?.ID;
+  }
+
+  if (!node.attributes) {
+    node.attributes = {};
+  }
+
+  if (shouldRemoveAttribute) {
+    delete node.attributes[attrName];
+  } else {
+    node.attributes[attrName] = attrValue;
+  }
+
+  if (node.source?.startTag) {
+    node.source.startTag = shouldRemoveAttribute
+      ? removeAttributeFromOpenTag(node.source.startTag, attrName)
+      : setAttributeInOpenTag(node.source.startTag, attrName, attrValue);
+  }
+
+  node.name =
+    node.attributes?.name ??
+    node.attributes?.ID;
+
+  renderDetails(node);
+  renderTree();
+}
+
+function findAllNodesByPath(roots, path) {
+  const matches = [];
+
+  if (!path) {
+    return matches;
+  }
+
+  for (const root of roots) {
+    collectNodesByPath(root, path, matches);
+  }
+
+  return matches;
+}
+
+function collectNodesByPath(node, path, matches) {
+  if (pathsEqual(node.source?.path, path)) {
+    matches.push(node);
+  }
+
+  for (const child of node.children ?? []) {
+    collectNodesByPath(child, path, matches);
+  }
+}
+
+function setAttributeInOpenTag(openTag, attributeName, attributeValue) {
+  const escapedName = escapeRegex(attributeName);
+  const attributeRegex = new RegExp(
+    `(\\s${escapedName}\\s*=\\s*)(["'])([\\s\\S]*?)(\\2)`
+  );
+
+  const existing = attributeRegex.exec(openTag);
+
+  if (existing) {
+    const quote = existing[2];
+    const encodedValue = encodeXmlAttribute(attributeValue, quote);
+
+    return openTag.replace(
+      attributeRegex,
+      `$1${quote}${encodedValue}${quote}`
+    );
+  }
+
+  const encodedValue = encodeXmlAttribute(attributeValue, '"');
+  const insertText = ` ${attributeName}="${encodedValue}"`;
+
+  if (/\/\s*>$/.test(openTag)) {
+    return openTag.replace(/\/\s*>$/, `${insertText}/>`);
+  }
+
+  return openTag.replace(/\s*>$/, `${insertText}>`);
+}
+
+function removeAttributeFromOpenTag(openTag, attributeName) {
+  const escapedName = escapeRegex(attributeName);
+  const attributeRegex = new RegExp(
+    `\\s${escapedName}\\s*=\\s*(["'])[\\s\\S]*?\\1`
+  );
+
+  return openTag.replace(attributeRegex, "");
+}
+
+function encodeXmlAttribute(value, quote) {
+  let encoded = String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
+
+  if (quote === '"') {
+    encoded = encoded.replaceAll('"', "&quot;");
+  }
+
+  if (quote === "'") {
+    encoded = encoded.replaceAll("'", "&apos;");
+  }
+
+  return encoded;
+}
+
+function escapeRegex(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function toggleInlineSubTree(subTreeNode) {
@@ -1040,151 +1422,6 @@ function applyTransform() {
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
-}
-
-function renderDetails(node) {
-  const visibleAttributes = getVisibleAttributes(node);
-
-  const rows = visibleAttributes
-    .map(([key, value]) => {
-      return `
-        <tr>
-          <td class="attr-name">${escapeHtml(key)}</td>
-          <td>
-            <input
-              class="attr-input"
-              data-attr-name="${escapeHtml(key)}"
-              value="${escapeHtml(String(value))}"
-            />
-          </td>
-          <td>
-            <button
-              class="attr-apply-button"
-              data-attr-name="${escapeHtml(key)}"
-            >
-              Apply
-            </button>
-          </td>
-        </tr>
-      `;
-    })
-    .join("");
-
-  const source = node.source;
-
-  detailsContainer.classList.remove("empty");
-
-  detailsContainer.innerHTML = `
-    <p><strong>Type:</strong> ${escapeHtml(node.tag)}</p>
-    <p><strong>Category:</strong> ${escapeHtml(node.kind)}</p>
-    ${
-      node.name
-        ? `<p><strong>Name:</strong> ${escapeHtml(node.name)}</p>`
-        : ""
-    }
-    ${
-      node.inlineExpanded
-        ? `<p><strong>SubTree:</strong> expanded inline</p>`
-        : ""
-    }
-    ${
-      node.inlineCycle
-        ? `<p><strong>SubTree:</strong> cycle blocked</p>`
-        : ""
-    }
-
-    <div class="xml-section">
-      <h3>XML</h3>
-      ${
-        source
-          ? `
-            <p class="source-location">
-              Line ${source.line + 1}, column ${source.column + 1}
-            </p>
-            <pre class="xml-preview">${escapeHtml(source.startTag)}</pre>
-            <button id="reveal-node-button">Reveal in XML</button>
-          `
-          : `<p class="empty">No XML source information available.</p>`
-      }
-    </div>
-
-    <h3>Attributes</h3>
-    ${
-      rows.length > 0
-        ? `<table class="attr-table">${rows}</table>`
-        : `<p class="empty">No normal attributes on this node.</p>`
-    }
-
-    <h3>Add attribute</h3>
-    <div class="add-attr-row">
-      <input id="new-attr-name" placeholder="attribute name" />
-      <input id="new-attr-value" placeholder="value" />
-      <button id="add-attr-button">Add</button>
-    </div>
-  `;
-
-  const revealButton = document.getElementById("reveal-node-button");
-
-  if (revealButton && source) {
-    revealButton.addEventListener("click", () => {
-      vscode.postMessage({
-        type: "revealNode",
-        startOffset: source.startOffset
-      });
-    });
-  }
-
-  for (const button of document.querySelectorAll(".attr-apply-button")) {
-    button.addEventListener("click", () => {
-      const attrName = button.getAttribute("data-attr-name");
-
-      if (!attrName) {
-        return;
-      }
-
-      const input = document.querySelector(
-        `.attr-input[data-attr-name="${cssEscape(attrName)}"]`
-      );
-
-      if (!input) {
-        return;
-      }
-
-      vscode.postMessage({
-        type: "updateAttribute",
-        path: node.source.path,
-        attrName,
-        attrValue: input.value
-      });
-    });
-  }
-
-  const addButton = document.getElementById("add-attr-button");
-
-  if (addButton) {
-    addButton.addEventListener("click", () => {
-      const nameInput = document.getElementById("new-attr-name");
-      const valueInput = document.getElementById("new-attr-value");
-
-      const attrName = nameInput?.value?.trim() ?? "";
-      const attrValue = valueInput?.value ?? "";
-
-      if (!attrName) {
-        return;
-      }
-
-      if (attrName === "name") {
-        return;
-      }
-
-      vscode.postMessage({
-        type: "updateAttribute",
-        path: node.source.path,
-        attrName,
-        attrValue
-      });
-    });
-  }
 }
 
 function findNodeByPathInForest(roots, path) {
