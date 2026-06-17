@@ -983,12 +983,12 @@ function renderDeleteSection(node) {
     return `
       <h3>Delete</h3>
       <div class="info-box">
-        This removes the SubTree reference. If the referenced BehaviorTree exists, it can be removed too.
+        This removes the SubTree reference. If the referenced BehaviorTree exists, it and nested referenced BehaviorTrees can be removed too.
       </div>
       <button id="delete-node-and-referenced-tree-button" class="attr-apply-button">
         ${
           targetExists
-            ? "Delete SubTree and referenced BehaviorTree"
+            ? "Delete SubTree and referenced BehaviorTrees"
             : "Delete SubTree reference"
         }
       </button>
@@ -1636,14 +1636,14 @@ function applyLocalChildNodeInsert(parentNode, tagName, attributes, definition) 
 }
 
 function applyLocalNodeDelete(pathToDelete, deleteReferencedBehaviorTree, nodeToDelete) {
-  const referencedId =
+  const referencedIds =
     deleteReferencedBehaviorTree && isSubTreeNode(nodeToDelete)
-      ? nodeToDelete.attributes?.ID
-      : undefined;
+      ? collectReferencedBehaviorTreeIdsForDelete(nodes, nodeToDelete)
+      : [];
 
   removeNodeByPath(nodes, pathToDelete);
 
-  if (referencedId) {
+  for (const referencedId of referencedIds) {
     removeBehaviorTreeById(nodes, referencedId);
   }
 
@@ -1660,6 +1660,90 @@ function applyLocalNodeDelete(pathToDelete, deleteReferencedBehaviorTree, nodeTo
   activeRootPath =
     findRootContainingPath(nodes, selectedNodePath)?.source?.path ??
     findPreferredTopRoot(nodes)?.source?.path;
+}
+
+function collectReferencedBehaviorTreeIdsForDelete(roots, nodeToDelete) {
+  const referencedId = getReferencedBehaviorTreeId(nodeToDelete);
+
+  if (!referencedId) {
+    return [];
+  }
+
+  const collectedIds = [];
+  const visitedIds = new Set();
+
+  collectReferencedBehaviorTreeIdsRecursive(
+    roots,
+    referencedId,
+    visitedIds,
+    collectedIds
+  );
+
+  return collectedIds;
+}
+
+function collectReferencedBehaviorTreeIdsRecursive(
+  roots,
+  behaviorTreeId,
+  visitedIds,
+  collectedIds
+) {
+  if (visitedIds.has(behaviorTreeId)) {
+    return;
+  }
+
+  visitedIds.add(behaviorTreeId);
+  collectedIds.push(behaviorTreeId);
+
+  const behaviorTree = findBehaviorTreeById(roots, behaviorTreeId);
+
+  if (!behaviorTree) {
+    return;
+  }
+
+  collectNestedReferencedBehaviorTreeIds(
+    roots,
+    behaviorTree,
+    visitedIds,
+    collectedIds
+  );
+}
+
+function collectNestedReferencedBehaviorTreeIds(
+  roots,
+  node,
+  visitedIds,
+  collectedIds
+) {
+  const referencedId = getReferencedBehaviorTreeId(node);
+
+  if (referencedId) {
+    collectReferencedBehaviorTreeIdsRecursive(
+      roots,
+      referencedId,
+      visitedIds,
+      collectedIds
+    );
+  }
+
+  for (const child of node.children ?? []) {
+    collectNestedReferencedBehaviorTreeIds(
+      roots,
+      child,
+      visitedIds,
+      collectedIds
+    );
+  }
+}
+
+function getReferencedBehaviorTreeId(node) {
+  if (!isSubTreeNode(node)) {
+    return undefined;
+  }
+
+  const id = node.attributes?.ID?.trim();
+
+  return id || undefined;
 }
 
 function removeNodeByPath(roots, path) {

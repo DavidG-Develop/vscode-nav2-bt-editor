@@ -862,10 +862,10 @@ async function deleteNode(
   const xmlText = document.getText();
   const parsedNodes = parseBehaviorTreeXml(xmlText);
   const nodeToDelete = findParsedNodeByPath(parsedNodes, message.path);
-  const referencedBehaviorTreeId =
+  const referencedBehaviorTreeIds =
     message.deleteReferencedBehaviorTree && nodeToDelete
-      ? getReferencedBehaviorTreeId(nodeToDelete.tag, nodeToDelete.attributes)
-      : undefined;
+      ? collectReferencedBehaviorTreeIdsForDelete(parsedNodes, nodeToDelete)
+      : [];
 
   let updatedXml: string;
 
@@ -878,18 +878,21 @@ async function deleteNode(
     return undefined;
   }
 
-  if (referencedBehaviorTreeId) {
+  for (const referencedBehaviorTreeId of referencedBehaviorTreeIds) {
     try {
       updatedXml = deleteBehaviorTreeById(
         updatedXml,
         referencedBehaviorTreeId
       ).xmlText;
     } catch (error) {
-      const messageText = error instanceof Error ? error.message : String(error);
+      if (!isMissingBehaviorTreeError(error)) {
+        const messageText =
+          error instanceof Error ? error.message : String(error);
 
-      vscode.window.showWarningMessage(
-        `Selected node was deleted, but the referenced BehaviorTree could not be deleted: ${messageText}`
-      );
+        vscode.window.showWarningMessage(
+          `Selected node was deleted, but referenced BehaviorTree "${referencedBehaviorTreeId}" could not be deleted: ${messageText}`
+        );
+      }
     }
   }
 
@@ -965,6 +968,89 @@ function getReferencedBehaviorTreeId(
   return id;
 }
 
+function collectReferencedBehaviorTreeIdsForDelete(
+  nodes: BtNode[],
+  nodeToDelete: BtNode
+): string[] {
+  const referencedBehaviorTreeId = getReferencedBehaviorTreeId(
+    nodeToDelete.tag,
+    nodeToDelete.attributes
+  );
+
+  if (!referencedBehaviorTreeId) {
+    return [];
+  }
+
+  const collectedIds: string[] = [];
+  const visitedIds = new Set<string>();
+
+  collectReferencedBehaviorTreeIdsRecursive(
+    nodes,
+    referencedBehaviorTreeId,
+    visitedIds,
+    collectedIds
+  );
+
+  return collectedIds;
+}
+
+function collectReferencedBehaviorTreeIdsRecursive(
+  nodes: BtNode[],
+  behaviorTreeId: string,
+  visitedIds: Set<string>,
+  collectedIds: string[]
+): void {
+  if (visitedIds.has(behaviorTreeId)) {
+    return;
+  }
+
+  visitedIds.add(behaviorTreeId);
+  collectedIds.push(behaviorTreeId);
+
+  const behaviorTree = findParsedBehaviorTreeById(nodes, behaviorTreeId);
+
+  if (!behaviorTree) {
+    return;
+  }
+
+  collectNestedReferencedBehaviorTreeIds(
+    nodes,
+    behaviorTree,
+    visitedIds,
+    collectedIds
+  );
+}
+
+function collectNestedReferencedBehaviorTreeIds(
+  nodes: BtNode[],
+  node: BtNode,
+  visitedIds: Set<string>,
+  collectedIds: string[]
+): void {
+  const referencedBehaviorTreeId = getReferencedBehaviorTreeId(
+    node.tag,
+    node.attributes
+  );
+
+  if (referencedBehaviorTreeId) {
+    collectReferencedBehaviorTreeIdsRecursive(
+      nodes,
+      referencedBehaviorTreeId,
+      visitedIds,
+      collectedIds
+    );
+  }
+
+  for (const child of node.children) {
+    collectNestedReferencedBehaviorTreeIds(
+      nodes,
+      child,
+      visitedIds,
+      collectedIds
+    );
+  }
+}
+
 function isSubTreeTagName(tagName: string): boolean {
   return tagName === "SubTree" || tagName === "SubTreePlus";
 }
@@ -982,6 +1068,47 @@ function isAlreadyExistsError(error: unknown): boolean {
     error.message.startsWith("BehaviorTree with ID") &&
     error.message.endsWith("already exists.")
   );
+}
+
+function isMissingBehaviorTreeError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    error.message.startsWith("Could not find BehaviorTree with ID")
+  );
+}
+
+function findParsedBehaviorTreeById(
+  nodes: BtNode[],
+  id: string
+): BtNode | undefined {
+  for (const node of nodes) {
+    const result = findParsedBehaviorTreeByIdRecursive(node, id);
+
+    if (result) {
+      return result;
+    }
+  }
+
+  return undefined;
+}
+
+function findParsedBehaviorTreeByIdRecursive(
+  node: BtNode,
+  id: string
+): BtNode | undefined {
+  if (node.tag === "BehaviorTree" && node.attributes["ID"] === id) {
+    return node;
+  }
+
+  for (const child of node.children) {
+    const result = findParsedBehaviorTreeByIdRecursive(child, id);
+
+    if (result) {
+      return result;
+    }
+  }
+
+  return undefined;
 }
 
 function findParsedNodeByPath(
