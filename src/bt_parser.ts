@@ -185,7 +185,9 @@ export function updateXmlAttributeByPath(
       ? removeAttributeFromOpenTag(openTag, attributeName)
       : setAttributeInOpenTag(openTag, attributeName, attributeValue);
 
-  return xmlText.slice(0, start) + updatedOpenTag + xmlText.slice(end);
+  return removeBlankXmlLines(
+    xmlText.slice(0, start) + updatedOpenTag + xmlText.slice(end)
+  );
 }
 
 export function insertXmlChildNodeByPath(
@@ -228,10 +230,11 @@ export function insertXmlChildNodeByPath(
     ].join("");
 
     return {
-      xmlText:
+      xmlText: removeBlankXmlLines(
         xmlText.slice(0, parent.source.startOffset) +
         replacement +
-        xmlText.slice(parent.source.endOpenTagOffset),
+        xmlText.slice(parent.source.endOpenTagOffset)
+      ),
       childPath
     };
   }
@@ -243,10 +246,11 @@ export function insertXmlChildNodeByPath(
   const insertion = `\n${childIndent}${childXml}\n${parentIndent}`;
 
   return {
-    xmlText:
+    xmlText: removeBlankXmlLines(
       xmlText.slice(0, parent.closeTag.startOffset) +
       insertion +
-      xmlText.slice(parent.closeTag.startOffset),
+      xmlText.slice(parent.closeTag.startOffset)
+    ),
     childPath
   };
 }
@@ -299,10 +303,11 @@ export function insertBehaviorTreeAfterPath(
     ];
 
     return {
-      xmlText:
+      xmlText: removeBlankXmlLines(
         xmlText.slice(0, insertBeforeOffset) +
         finalInsertion +
-        xmlText.slice(insertBeforeOffset),
+        xmlText.slice(insertBeforeOffset)
+      ),
       behaviorTreePath
     };
   }
@@ -319,10 +324,11 @@ export function insertBehaviorTreeAfterPath(
   const behaviorTreePath = getInsertedRootSiblingPath(roots, referenceTree);
 
   return {
-    xmlText:
+    xmlText: removeBlankXmlLines(
       xmlText.slice(0, insertAfterOffset) +
       insertion +
-      xmlText.slice(insertAfterOffset),
+      xmlText.slice(insertAfterOffset)
+    ),
     behaviorTreePath
   };
 }
@@ -341,7 +347,9 @@ export function deleteXmlNodeByPath(
   const range = getNodeDeletionRange(xmlText, target);
 
   return {
-    xmlText: xmlText.slice(0, range.start) + xmlText.slice(range.end),
+    xmlText: removeBlankXmlLines(
+      xmlText.slice(0, range.start) + xmlText.slice(range.end)
+    ),
     deletedPath: target.source.path
   };
 }
@@ -360,7 +368,9 @@ export function deleteBehaviorTreeById(
   const range = getNodeDeletionRange(xmlText, target);
 
   return {
-    xmlText: xmlText.slice(0, range.start) + xmlText.slice(range.end),
+    xmlText: removeBlankXmlLines(
+      xmlText.slice(0, range.start) + xmlText.slice(range.end)
+    ),
     deletedPath: target.source.path
   };
 }
@@ -886,6 +896,23 @@ function getLineIndentAtOffset(text: string, offset: number): string {
 
 function isSelfClosingOpenTag(openTag: string): boolean {
   return /\/\s*>$/.test(openTag);
+}
+
+function removeBlankXmlLines(xmlText: string): string {
+  const lineEnding = xmlText.includes("\r\n") ? "\r\n" : "\n";
+  const hasTrailingLineEnding = xmlText.endsWith("\n");
+  const lines = xmlText.split(/\r?\n/);
+
+  if (hasTrailingLineEnding) {
+    lines.pop();
+  }
+
+  const nonBlankLines = lines.filter((line) => !/^[\t ]*$/.test(line));
+
+  return [
+    nonBlankLines.join(lineEnding),
+    hasTrailingLineEnding ? lineEnding : ""
+  ].join("");
 }
 
 function setAttributeInOpenTag(

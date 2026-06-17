@@ -1,26 +1,14 @@
 <root main_tree_to_execute="MainTree">
   <BehaviorTree ID="MainTree">
-  
-    <Sequence name="FirstSequence">
-      <AlignToDock name="Align" docking_station="1st_dock"/>
-    
-    
-      <Delay>
-        <IsDoorClosed/>
-      </Delay>
-    
-      <Fallback>
-        <ArePosesNear/>
-      
-        <Inverter>
-          <NavigateThroughPoses/>
-        </Inverter>
-
-      
-      
-      
-      </Fallback>
+    <Fallback>
+      <AlignToDock docking_station="1"/>
+      <SubTree ID="docktree" _autoremap="true"/>
+    </Fallback>
+  </BehaviorTree>
+  <BehaviorTree ID="docktree">
+    <Sequence>
+      <ApproachDock/>
+      <DockRobot/>
     </Sequence>
-  
   </BehaviorTree>
 </root>

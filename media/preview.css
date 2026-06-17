@@ -137,8 +137,9 @@ body {
 }
 
 .bt-node-group.selected .bt-shape {
-  stroke: var(--vscode-focusBorder);
-  stroke-width: 3;
+  stroke: rgb(255, 152, 0);
+  stroke-width: 4;
+  filter: drop-shadow(0 0 6px rgba(255, 152, 0, 0.65));
 }
 
 .bt-text {
