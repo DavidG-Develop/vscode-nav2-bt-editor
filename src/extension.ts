@@ -1,9 +1,13 @@
 import * as vscode from "vscode";
 import {
   parseBehaviorTreeXml,
+  parseTreeNodeDefinitionsFromXml,
+  TreeNodeDefinitionMap,
   updateXmlAttributeByPath
 } from "./bt_parser";
 import { getWebviewHtml, PreviewOptions } from "./webview";
+
+const IMPORTED_TREE_NODE_DEFINITIONS_KEY = "importedTreeNodeDefinitions";
 
 type WebviewMessage =
   | {
@@ -21,8 +25,14 @@ type WebviewMessage =
       attrValue: string;
     };
 
+type ImportedDefinitionQuickPickItem = vscode.QuickPickItem & {
+  nodeId: string;
+};
+
 export function activate(context: vscode.ExtensionContext): void {
-  const disposable = vscode.commands.registerCommand(
+  const previewRefreshers = new Set<() => void>();
+
+  const openPreviewDisposable = vscode.commands.registerCommand(
     "nav2-bt-preview.openPreview",
     async (uri?: vscode.Uri) => {
       const document = await getTargetDocument(uri);
@@ -61,7 +71,10 @@ export function activate(context: vscode.ExtensionContext): void {
       function updatePreview(): void {
         try {
           const xmlText = targetDocument.getText();
-          const nodes = parseBehaviorTreeXml(xmlText);
+          const nodes = parseBehaviorTreeXml(
+            xmlText,
+            getImportedTreeNodeDefinitions(context)
+          );
 
           panel.webview.html = getWebviewHtml(
             panel.webview,
@@ -87,6 +100,8 @@ export function activate(context: vscode.ExtensionContext): void {
           updatePreview();
         }, 80);
       }
+
+      previewRefreshers.add(scheduleUpdatePreview);
 
       panel.webview.onDidReceiveMessage(
         async (message: WebviewMessage) => {
@@ -164,13 +179,114 @@ export function activate(context: vscode.ExtensionContext): void {
           clearTimeout(refreshTimer);
         }
 
+        previewRefreshers.delete(scheduleUpdatePreview);
         changeSubscription.dispose();
         configSubscription.dispose();
       });
     }
   );
 
-  context.subscriptions.push(disposable);
+  const importTreeNodesModelDisposable = vscode.commands.registerCommand(
+    "nav2-bt-preview.importTreeNodesModel",
+    async () => {
+      const selectedFiles = await vscode.window.showOpenDialog({
+        canSelectFiles: true,
+        canSelectFolders: false,
+        canSelectMany: false,
+        filters: {
+          XML: ["xml"],
+          "All files": ["*"]
+        },
+        title: "Import BehaviorTree.CPP TreeNodesModel XML"
+      });
+
+      const selectedFile = selectedFiles?.[0];
+
+      if (!selectedFile) {
+        return;
+      }
+
+      const fileData = await vscode.workspace.fs.readFile(selectedFile);
+      const xmlText = Buffer.from(fileData).toString("utf8");
+
+      await importTreeNodeDefinitionsFromText(
+        context,
+        xmlText,
+        selectedFile.fsPath,
+        previewRefreshers
+      );
+    }
+  );
+
+  const importTreeNodesModelFromUrlDisposable = vscode.commands.registerCommand(
+    "nav2-bt-preview.importTreeNodesModelFromUrl",
+    async () => {
+      const url = await vscode.window.showInputBox({
+        title: "Import BehaviorTree.CPP TreeNodesModel XML from URL",
+        prompt:
+          "Paste a URL to an XML file. GitHub blob URLs are converted to raw URLs automatically.",
+        placeHolder:
+          "https://github.com/ros-navigation/navigation2/blob/main/nav2_behavior_tree/nav2_tree_nodes.xml"
+      });
+
+      if (!url) {
+        return;
+      }
+
+      const normalizedUrl = normalizeGitHubBlobUrlToRaw(url);
+      const response = await fetch(normalizedUrl);
+
+      if (!response.ok) {
+        vscode.window.showErrorMessage(
+          `Failed to download TreeNodesModel XML: HTTP ${response.status}`
+        );
+        return;
+      }
+
+      const xmlText = await response.text();
+
+      await importTreeNodeDefinitionsFromText(
+        context,
+        xmlText,
+        normalizedUrl,
+        previewRefreshers
+      );
+    }
+  );
+
+  const removeImportedTreeNodeDefinitionDisposable =
+    vscode.commands.registerCommand(
+      "nav2-bt-preview.removeImportedTreeNodeDefinition",
+      async () => {
+        await removeImportedTreeNodeDefinitions(context, previewRefreshers);
+      }
+    );
+
+  const clearImportedTreeNodesModelDisposable = vscode.commands.registerCommand(
+    "nav2-bt-preview.clearImportedTreeNodesModel",
+    async () => {
+      await context.globalState.update(
+        IMPORTED_TREE_NODE_DEFINITIONS_KEY,
+        undefined
+      );
+
+      for (const refresh of previewRefreshers) {
+        refresh();
+      }
+
+      vscode.window.showInformationMessage(
+        "Cleared imported TreeNodesModel definitions."
+      );
+    }
+  );
+
+  context.subscriptions.push(
+    openPreviewDisposable,
+    importTreeNodesModelDisposable,
+    importTreeNodesModelFromUrlDisposable,
+    removeImportedTreeNodeDefinitionDisposable,
+    clearImportedTreeNodesModelDisposable
+  );
 }
 
 export function deactivate(): void {}
@@ -189,6 +305,138 @@ async function getTargetDocument(
   }
 
   return undefined;
+}
+
+async function importTreeNodeDefinitionsFromText(
+  context: vscode.ExtensionContext,
+  xmlText: string,
+  sourceLabel: string,
+  previewRefreshers: Set<() => void>
+): Promise<void> {
+  const importedDefinitions = parseTreeNodeDefinitionsFromXml(xmlText);
+  const importedCount = Object.keys(importedDefinitions).length;
+
+  if (importedCount === 0) {
+    vscode.window.showWarningMessage(
+      "No TreeNodesModel node definitions were found in the selected XML."
+    );
+    return;
+  }
+
+  const existingDefinitions = getImportedTreeNodeDefinitions(context);
+
+  const mergedDefinitions: TreeNodeDefinitionMap = {
+    ...existingDefinitions,
+    ...importedDefinitions
+  };
+
+  await context.globalState.update(
+    IMPORTED_TREE_NODE_DEFINITIONS_KEY,
+    mergedDefinitions
+  );
+
+  for (const refresh of previewRefreshers) {
+    refresh();
+  }
+
+  vscode.window.showInformationMessage(
+    `Imported ${importedCount} TreeNodesModel definitions from ${sourceLabel}. Total stored definitions: ${Object.keys(mergedDefinitions).length}.`
+  );
+}
+
+async function removeImportedTreeNodeDefinitions(
+  context: vscode.ExtensionContext,
+  previewRefreshers: Set<() => void>
+): Promise<void> {
+  const existingDefinitions = getImportedTreeNodeDefinitions(context);
+  const entries = Object.entries(existingDefinitions).sort(([leftId], [rightId]) =>
+    leftId.localeCompare(rightId)
+  );
+
+  if (entries.length === 0) {
+    vscode.window.showInformationMessage(
+      "There are no imported TreeNodesModel definitions to remove."
+    );
+    return;
+  }
+
+  const items: ImportedDefinitionQuickPickItem[] = entries.map(([nodeId, kind]) => {
+    return {
+      nodeId,
+      label: nodeId,
+      description: kind,
+      detail: `Imported ${kind} node definition`
+    };
+  });
+
+  const selectedItems = await vscode.window.showQuickPick(items, {
+    title: "Remove Imported TreeNode Definitions",
+    placeHolder: "Select one or more imported node definitions to remove",
+    canPickMany: true
+  });
+
+  if (!selectedItems || selectedItems.length === 0) {
+    return;
+  }
+
+  const updatedDefinitions: TreeNodeDefinitionMap = {
+    ...existingDefinitions
+  };
+
+  for (const item of selectedItems) {
+    delete updatedDefinitions[item.nodeId];
+  }
+
+  await context.globalState.update(
+    IMPORTED_TREE_NODE_DEFINITIONS_KEY,
+    Object.keys(updatedDefinitions).length > 0 ? updatedDefinitions : undefined
+  );
+
+  for (const refresh of previewRefreshers) {
+    refresh();
+  }
+
+  vscode.window.showInformationMessage(
+    `Removed ${selectedItems.length} imported TreeNodesModel definition${selectedItems.length === 1 ? "" : "s"}. Remaining stored definitions: ${Object.keys(updatedDefinitions).length}.`
+  );
+}
+
+function getImportedTreeNodeDefinitions(
+  context: vscode.ExtensionContext
+): TreeNodeDefinitionMap {
+  return context.globalState.get<TreeNodeDefinitionMap>(
+    IMPORTED_TREE_NODE_DEFINITIONS_KEY,
+    {}
+  );
+}
+
+function normalizeGitHubBlobUrlToRaw(url: string): string {
+  try {
+    const parsedUrl = new URL(url);
+
+    if (
+      parsedUrl.hostname !== "github.com" ||
+      !parsedUrl.pathname.includes("/blob/")
+    ) {
+      return url;
+    }
+
+    const parts = parsedUrl.pathname.split("/").filter(Boolean);
+    const blobIndex = parts.indexOf("blob");
+
+    if (blobIndex < 2 || blobIndex + 2 >= parts.length) {
+      return url;
+    }
+
+    const owner = parts[0];
+    const repo = parts[1];
+    const branch = parts[blobIndex + 1];
+    const filePath = parts.slice(blobIndex + 2).join("/");
+
+    return `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${filePath}`;
+  } catch {
+    return url;
+  }
 }
 
 function getPreviewOptions(resourceUri: vscode.Uri): PreviewOptions {

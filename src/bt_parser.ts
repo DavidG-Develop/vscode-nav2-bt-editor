@@ -19,6 +19,8 @@ export type BtNode = {
   source: BtNodeSource;
 };
 
+export type TreeNodeDefinitionMap = Record<string, BtNodeKind>;
+
 type InternalXmlNode = Omit<BtNode, "kind" | "children"> & {
   kind?: BtNodeKind;
   parent?: InternalXmlNode;
@@ -28,10 +30,8 @@ type InternalXmlNode = Omit<BtNode, "kind" | "children"> & {
 type TreeNodeModelCatalog = Map<string, BtNodeKind>;
 
 const BUILTIN_CONTROL_NODES = new Set([
-  // XML / wrapper nodes
   "BehaviorTree",
 
-  // BehaviorTree.CPP controls
   "Sequence",
   "AsyncSequence",
   "SequenceStar",
@@ -51,7 +51,6 @@ const BUILTIN_CONTROL_NODES = new Set([
   "Switch5",
   "Switch6",
 
-  // Nav2 controls
   "PipelineSequence",
   "RecoveryNode",
   "RoundRobin",
@@ -61,7 +60,6 @@ const BUILTIN_CONTROL_NODES = new Set([
 ]);
 
 const BUILTIN_DECORATOR_NODES = new Set([
-  // BehaviorTree.CPP decorators
   "Inverter",
   "ForceSuccess",
   "ForceFailure",
@@ -76,7 +74,6 @@ const BUILTIN_DECORATOR_NODES = new Set([
   "SubTree",
   "SubTreePlus",
 
-  // Nav2 decorators
   "RateController",
   "DistanceController",
   "SpeedController",
@@ -87,12 +84,10 @@ const BUILTIN_DECORATOR_NODES = new Set([
 ]);
 
 const BUILTIN_CONDITION_NODES = new Set([
-  // Common / BehaviorTree.CPP-ish conditions
   "AlwaysSuccess",
   "AlwaysFailure",
   "ScriptCondition",
 
-  // Nav2 conditions
   "AreErrorCodesPresent",
   "ArePosesNear",
   "DistanceTraveled",
@@ -116,15 +111,11 @@ const BUILTIN_CONDITION_NODES = new Set([
 ]);
 
 const BUILTIN_ACTION_NODES = new Set([
-  // BehaviorTree.CPP common test/simple actions
-  "AlwaysSuccess",
-  "AlwaysFailure",
   "SetBlackboard",
   "UnsetBlackboard",
   "Script",
   "Sleep",
 
-  // Nav2 actions / services / selector nodes
   "AppendGoalPoseToGoals",
   "AssistedTeleop",
   "CancelAssistedTeleop",
@@ -181,11 +172,14 @@ function makeId(): string {
   return `bt-node-${nextId}`;
 }
 
-export function parseBehaviorTreeXml(xmlText: string): BtNode[] {
+export function parseBehaviorTreeXml(
+  xmlText: string,
+  externalDefinitions: TreeNodeDefinitionMap = {}
+): BtNode[] {
   nextId = 0;
 
   const roots = scanXml(xmlText);
-  const modelCatalog = buildTreeNodesModelCatalog(roots);
+  const modelCatalog = buildTreeNodesModelCatalog(roots, externalDefinitions);
 
   const behaviorTrees: InternalXmlNode[] = [];
 
@@ -196,6 +190,21 @@ export function parseBehaviorTreeXml(xmlText: string): BtNode[] {
   const outputRoots = behaviorTrees.length > 0 ? behaviorTrees : roots;
 
   return outputRoots.map((node) => stripInternalFields(node, modelCatalog));
+}
+
+export function parseTreeNodeDefinitionsFromXml(
+  xmlText: string
+): TreeNodeDefinitionMap {
+  const roots = scanXml(xmlText);
+  const catalog = buildTreeNodesModelCatalog(roots, {});
+
+  const definitions: TreeNodeDefinitionMap = {};
+
+  for (const [id, kind] of catalog.entries()) {
+    definitions[id] = kind;
+  }
+
+  return definitions;
 }
 
 export function updateXmlAttributeByPath(
@@ -327,9 +336,14 @@ function scanXml(xmlText: string): InternalXmlNode[] {
 }
 
 function buildTreeNodesModelCatalog(
-  roots: InternalXmlNode[]
+  roots: InternalXmlNode[],
+  externalDefinitions: TreeNodeDefinitionMap
 ): TreeNodeModelCatalog {
   const catalog: TreeNodeModelCatalog = new Map();
+
+  for (const [id, kind] of Object.entries(externalDefinitions)) {
+    catalog.set(id, kind);
+  }
 
   for (const root of roots) {
     collectTreeNodesModelEntries(root, catalog);

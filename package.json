@@ -20,6 +20,22 @@
       {
         "command": "nav2-bt-preview.openPreview",
         "title": "Nav2 BT Preview: Open Preview"
+      },
+      {
+        "command": "nav2-bt-preview.importTreeNodesModel",
+        "title": "Nav2 BT Preview: Import TreeNodesModel XML File"
+      },
+      {
+        "command": "nav2-bt-preview.importTreeNodesModelFromUrl",
+        "title": "Nav2 BT Preview: Import TreeNodesModel XML from URL"
+      },
+      {
+        "command": "nav2-bt-preview.removeImportedTreeNodeDefinition",
+        "title": "Nav2 BT Preview: Remove Imported TreeNode Definition"
+      },
+      {
+        "command": "nav2-bt-preview.clearImportedTreeNodesModel",
+        "title": "Nav2 BT Preview: Clear Imported TreeNodesModel Definitions"
       }
     ],
     "configuration": {
