@@ -147,6 +147,10 @@ export function parseBehaviorTreeXml(
 
   const outputRoots = behaviorTrees.length > 0 ? behaviorTrees : roots;
 
+  if (behaviorTrees.length > 0) {
+    validateBehaviorTreeXmlNodes(outputRoots, modelCatalog);
+  }
+
   return outputRoots.map((node) => stripInternalFields(node, modelCatalog));
 }
 
@@ -828,6 +832,51 @@ function stripInternalFields(
   };
 }
 
+function validateBehaviorTreeXmlNodes(
+  nodes: InternalXmlNode[],
+  modelCatalog: TreeNodeModelCatalog
+): void {
+  for (const node of nodes) {
+    validateBehaviorTreeXmlNode(node, modelCatalog);
+  }
+}
+
+function validateBehaviorTreeXmlNode(
+  node: InternalXmlNode,
+  modelCatalog: TreeNodeModelCatalog
+): void {
+  const openTag = node.source.startTag;
+
+  if (!isSelfClosingOpenTag(openTag) && !node.closeTag) {
+    throw new Error(
+      `Malformed XML at ${formatXmlLocation(node)}: <${node.tag}> is missing a closing tag or "/>".`
+    );
+  }
+
+  const definition = modelCatalog.get(node.tag);
+  const kind = definition?.kind;
+  const isLeafNode = kind === "action" || kind === "condition";
+  const isSubTreeLeaf = node.tag === "SubTree" || node.tag === "SubTreePlus";
+
+  if ((isLeafNode || isSubTreeLeaf) && node.children.length > 0) {
+    const expectedForm = isSelfClosingOpenTag(openTag)
+      ? "no child BehaviorTree nodes"
+      : 'a self-closing tag like "<' + node.tag + ' .../>"';
+
+    throw new Error(
+      `Invalid BehaviorTree XML at ${formatXmlLocation(node)}: <${node.tag}> is a leaf node and cannot contain child nodes. Use ${expectedForm}.`
+    );
+  }
+
+  for (const child of node.children) {
+    validateBehaviorTreeXmlNode(child, modelCatalog);
+  }
+}
+
+function formatXmlLocation(node: InternalXmlNode): string {
+  return `line ${node.source.line + 1}, column ${node.source.column + 1}`;
+}
+
 function collectBehaviorTrees(
   node: InternalXmlNode,
   output: InternalXmlNode[]
@@ -874,9 +923,17 @@ function scanXml(xmlText: string): InternalXmlNode[] {
 
     if (xmlText.startsWith("</", openIndex)) {
       const closeIndex = xmlText.indexOf(">", openIndex + 2);
+      const location = offsetToLineColumn(xmlText, openIndex);
+
+      if (closeIndex < 0) {
+        throw new Error(
+          `Malformed XML at line ${location.line + 1}, column ${location.column + 1}: closing tag is missing ">".`
+        );
+      }
+
       const closingTagText = xmlText.slice(
         openIndex,
-        closeIndex < 0 ? xmlText.length : closeIndex + 1
+        closeIndex + 1
       );
       const closingTagName = extractClosingTagName(closingTagText);
 
@@ -890,7 +947,7 @@ function scanXml(xmlText: string): InternalXmlNode[] {
 
           candidate.closeTag = {
             startOffset: openIndex,
-            endOffset: closeIndex < 0 ? xmlText.length : closeIndex + 1
+            endOffset: closeIndex + 1
           };
 
           stack.length = stackIndex;
@@ -900,7 +957,7 @@ function scanXml(xmlText: string): InternalXmlNode[] {
         stack.pop();
       }
 
-      index = closeIndex < 0 ? xmlText.length : closeIndex + 1;
+      index = closeIndex + 1;
       continue;
     }
 
@@ -913,7 +970,11 @@ function scanXml(xmlText: string): InternalXmlNode[] {
     const closeIndex = findOpenTagEnd(xmlText, openIndex);
 
     if (closeIndex < 0) {
-      break;
+      const location = offsetToLineColumn(xmlText, openIndex);
+
+      throw new Error(
+        `Malformed XML at line ${location.line + 1}, column ${location.column + 1}: opening tag is missing ">".`
+      );
     }
 
     const openTag = xmlText.slice(openIndex, closeIndex + 1);
@@ -1042,6 +1103,10 @@ function findOpenTagEnd(xmlText: string, startOffset: number): number {
     if (char === '"' || char === "'") {
       quote = char;
       continue;
+    }
+
+    if (char === "<") {
+      return -1;
     }
 
     if (char === ">") {
