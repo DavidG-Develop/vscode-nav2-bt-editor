@@ -17,7 +17,7 @@ import {
   TreeNodeDefinitionMap,
   updateXmlAttributeByPath
 } from "./bt_parser";
-import { getWebviewHtml, PreviewOptions } from "./webview";
+import { getWebviewHtml, EditorOptions } from "./webview";
 
 const IMPORTED_TREE_NODE_DEFINITIONS_KEY = "importedTreeNodeDefinitions";
 const IMPORTED_BEHAVIOR_TREES_KEY = "importedBehaviorTrees";
@@ -68,10 +68,10 @@ type ImportedBehaviorTreeQuickPickItem = vscode.QuickPickItem & {
 };
 
 export function activate(context: vscode.ExtensionContext): void {
-  const previewRefreshers = new Set<() => void>();
+  const editorRefreshers = new Set<() => void>();
 
-  const openPreviewDisposable = vscode.commands.registerCommand(
-    "nav2-bt-preview.openPreview",
+  const openEditorDisposable = vscode.commands.registerCommand(
+    "nav2-bt-editor.openEditor",
     async (uri?: vscode.Uri) => {
       const document = await getTargetDocument(uri);
 
@@ -95,8 +95,8 @@ export function activate(context: vscode.ExtensionContext): void {
       let suppressDocumentRefreshUntil = 0;
 
       const panel = vscode.window.createWebviewPanel(
-        "nav2BtPreview",
-        "Nav2 BT Preview",
+        "nav2BtEditor",
+        "Nav2 BT Editor",
         vscode.ViewColumn.Beside,
         {
           enableScripts: true,
@@ -107,7 +107,7 @@ export function activate(context: vscode.ExtensionContext): void {
         }
       );
 
-      function updatePreview(): void {
+      function updateEditor(): void {
         try {
           const xmlText = targetDocument.getText();
           const importedDefinitions = getImportedTreeNodeDefinitions(context);
@@ -123,9 +123,9 @@ export function activate(context: vscode.ExtensionContext): void {
             context.extensionUri,
             nodes,
             selectedPath,
-            getPreviewOptions(targetDocument.uri),
+            getEditorOptions(targetDocument.uri),
             treeNodeDefinitions,
-            getImportedBehaviorTreePreviews(
+            getImportedBehaviorTreeViews(
               importedBehaviorTrees,
               importedDefinitions
             )
@@ -138,13 +138,13 @@ export function activate(context: vscode.ExtensionContext): void {
         }
       }
 
-      function scheduleUpdatePreview(): void {
+      function scheduleUpdateEditor(): void {
         if (refreshTimer) {
           clearTimeout(refreshTimer);
         }
 
         refreshTimer = setTimeout(() => {
-          updatePreview();
+          updateEditor();
         }, 80);
       }
 
@@ -159,7 +159,7 @@ export function activate(context: vscode.ExtensionContext): void {
         return Date.now() < suppressDocumentRefreshUntil;
       }
 
-      previewRefreshers.add(scheduleUpdatePreview);
+      editorRefreshers.add(scheduleUpdateEditor);
 
       panel.webview.onDidReceiveMessage(
         async (message: WebviewMessage) => {
@@ -336,7 +336,7 @@ export function activate(context: vscode.ExtensionContext): void {
         context.subscriptions
       );
 
-      updatePreview();
+      updateEditor();
 
       const changeSubscription = vscode.workspace.onDidChangeTextDocument(
         (event) => {
@@ -348,7 +348,7 @@ export function activate(context: vscode.ExtensionContext): void {
             return;
           }
 
-          scheduleUpdatePreview();
+          scheduleUpdateEditor();
         }
       );
 
@@ -356,27 +356,27 @@ export function activate(context: vscode.ExtensionContext): void {
         (event) => {
           if (
             event.affectsConfiguration(
-              "nav2BtPreview.openOnlyOneBehaviorTree",
+              "nav2BtEditor.openOnlyOneBehaviorTree",
               targetDocument.uri
             ) ||
             event.affectsConfiguration(
-              "nav2BtPreview.autoFitOnTreeChange",
+              "nav2BtEditor.autoFitOnTreeChange",
               targetDocument.uri
             ) ||
             event.affectsConfiguration(
-              "nav2BtPreview.autoSaveEdits",
+              "nav2BtEditor.autoSaveEdits",
               targetDocument.uri
             ) ||
             event.affectsConfiguration(
-              "nav2BtPreview.allowEmptyAttributes",
+              "nav2BtEditor.allowEmptyAttributes",
               targetDocument.uri
             ) ||
             event.affectsConfiguration(
-              "nav2BtPreview.includeFullBehaviorTree",
+              "nav2BtEditor.includeFullBehaviorTree",
               targetDocument.uri
             )
           ) {
-            scheduleUpdatePreview();
+            scheduleUpdateEditor();
           }
         }
       );
@@ -386,7 +386,7 @@ export function activate(context: vscode.ExtensionContext): void {
           clearTimeout(refreshTimer);
         }
 
-        previewRefreshers.delete(scheduleUpdatePreview);
+        editorRefreshers.delete(scheduleUpdateEditor);
         changeSubscription.dispose();
         configSubscription.dispose();
       });
@@ -394,7 +394,7 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   const importTreeNodesModelDisposable = vscode.commands.registerCommand(
-    "nav2-bt-preview.importTreeNodesModel",
+    "nav2-bt-editor.importTreeNodesModel",
     async () => {
       const selectedFiles = await vscode.window.showOpenDialog({
         canSelectFiles: true,
@@ -420,13 +420,13 @@ export function activate(context: vscode.ExtensionContext): void {
         context,
         xmlText,
         selectedFile.fsPath,
-        previewRefreshers
+        editorRefreshers
       );
     }
   );
 
   const importTreeNodesModelFromUrlDisposable = vscode.commands.registerCommand(
-    "nav2-bt-preview.importTreeNodesModelFromUrl",
+    "nav2-bt-editor.importTreeNodesModelFromUrl",
     async () => {
       const url = await vscode.window.showInputBox({
         title: "Import BehaviorTree.CPP TreeNodesModel XML from URL",
@@ -456,13 +456,13 @@ export function activate(context: vscode.ExtensionContext): void {
         context,
         xmlText,
         normalizedUrl,
-        previewRefreshers
+        editorRefreshers
       );
     }
   );
 
   const importBehaviorTreeDisposable = vscode.commands.registerCommand(
-    "nav2-bt-preview.importBehaviorTree",
+    "nav2-bt-editor.importBehaviorTree",
     async () => {
       const selectedFiles = await vscode.window.showOpenDialog({
         canSelectFiles: true,
@@ -488,13 +488,13 @@ export function activate(context: vscode.ExtensionContext): void {
         context,
         xmlText,
         selectedFile.fsPath,
-        previewRefreshers
+        editorRefreshers
       );
     }
   );
 
   const importBehaviorTreeFromUrlDisposable = vscode.commands.registerCommand(
-    "nav2-bt-preview.importBehaviorTreeFromUrl",
+    "nav2-bt-editor.importBehaviorTreeFromUrl",
     async () => {
       const url = await vscode.window.showInputBox({
         title: "Import BehaviorTree XML as SubTree from URL",
@@ -524,35 +524,35 @@ export function activate(context: vscode.ExtensionContext): void {
         context,
         xmlText,
         normalizedUrl,
-        previewRefreshers
+        editorRefreshers
       );
     }
   );
 
   const removeImportedTreeNodeDefinitionDisposable =
     vscode.commands.registerCommand(
-      "nav2-bt-preview.removeImportedTreeNodeDefinition",
+      "nav2-bt-editor.removeImportedTreeNodeDefinition",
       async () => {
-        await removeImportedTreeNodeDefinitions(context, previewRefreshers);
+        await removeImportedTreeNodeDefinitions(context, editorRefreshers);
       }
     );
 
   const removeImportedBehaviorTreeDisposable = vscode.commands.registerCommand(
-    "nav2-bt-preview.removeImportedBehaviorTree",
+    "nav2-bt-editor.removeImportedBehaviorTree",
     async () => {
-      await removeImportedBehaviorTrees(context, previewRefreshers);
+      await removeImportedBehaviorTrees(context, editorRefreshers);
     }
   );
 
   const clearImportedTreeNodesModelDisposable = vscode.commands.registerCommand(
-    "nav2-bt-preview.clearImportedTreeNodesModel",
+    "nav2-bt-editor.clearImportedTreeNodesModel",
     async () => {
       await context.globalState.update(
         IMPORTED_TREE_NODE_DEFINITIONS_KEY,
         undefined
       );
 
-      for (const refresh of previewRefreshers) {
+      for (const refresh of editorRefreshers) {
         refresh();
       }
 
@@ -563,11 +563,11 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   const clearImportedBehaviorTreesDisposable = vscode.commands.registerCommand(
-    "nav2-bt-preview.clearImportedBehaviorTrees",
+    "nav2-bt-editor.clearImportedBehaviorTrees",
     async () => {
       await context.globalState.update(IMPORTED_BEHAVIOR_TREES_KEY, undefined);
 
-      for (const refresh of previewRefreshers) {
+      for (const refresh of editorRefreshers) {
         refresh();
       }
 
@@ -578,7 +578,7 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   context.subscriptions.push(
-    openPreviewDisposable,
+    openEditorDisposable,
     importTreeNodesModelDisposable,
     importTreeNodesModelFromUrlDisposable,
     importBehaviorTreeDisposable,
@@ -612,7 +612,7 @@ async function importTreeNodeDefinitionsFromText(
   context: vscode.ExtensionContext,
   xmlText: string,
   sourceLabel: string,
-  previewRefreshers: Set<() => void>
+  editorRefreshers: Set<() => void>
 ): Promise<void> {
   const importedDefinitions = parseTreeNodeDefinitionsFromXml(
     xmlText,
@@ -639,7 +639,7 @@ async function importTreeNodeDefinitionsFromText(
     mergedDefinitions
   );
 
-  for (const refresh of previewRefreshers) {
+  for (const refresh of editorRefreshers) {
     refresh();
   }
 
@@ -652,7 +652,7 @@ async function importBehaviorTreesFromText(
   context: vscode.ExtensionContext,
   xmlText: string,
   sourceLabel: string,
-  previewRefreshers: Set<() => void>
+  editorRefreshers: Set<() => void>
 ): Promise<void> {
   const importedBehaviorTrees = parseBehaviorTreeTemplatesFromXml(
     xmlText,
@@ -679,7 +679,7 @@ async function importBehaviorTreesFromText(
     mergedBehaviorTrees
   );
 
-  for (const refresh of previewRefreshers) {
+  for (const refresh of editorRefreshers) {
     refresh();
   }
 
@@ -690,7 +690,7 @@ async function importBehaviorTreesFromText(
 
 async function removeImportedTreeNodeDefinitions(
   context: vscode.ExtensionContext,
-  previewRefreshers: Set<() => void>
+  editorRefreshers: Set<() => void>
 ): Promise<void> {
   const existingDefinitions = getImportedTreeNodeDefinitions(context);
   const entries = Object.entries(existingDefinitions).sort(
@@ -741,7 +741,7 @@ async function removeImportedTreeNodeDefinitions(
     Object.keys(updatedDefinitions).length > 0 ? updatedDefinitions : undefined
   );
 
-  for (const refresh of previewRefreshers) {
+  for (const refresh of editorRefreshers) {
     refresh();
   }
 
@@ -752,7 +752,7 @@ async function removeImportedTreeNodeDefinitions(
 
 async function removeImportedBehaviorTrees(
   context: vscode.ExtensionContext,
-  previewRefreshers: Set<() => void>
+  editorRefreshers: Set<() => void>
 ): Promise<void> {
   const existingBehaviorTrees = getImportedBehaviorTrees(context);
   const entries = Object.entries(existingBehaviorTrees).sort(
@@ -802,7 +802,7 @@ async function removeImportedBehaviorTrees(
       : undefined
   );
 
-  for (const refresh of previewRefreshers) {
+  for (const refresh of editorRefreshers) {
     refresh();
   }
 
@@ -868,7 +868,7 @@ function getImportedBehaviorTrees(
   return normalized;
 }
 
-function getImportedBehaviorTreePreviews(
+function getImportedBehaviorTreeViews(
   importedBehaviorTrees: BehaviorTreeTemplateMap,
   importedDefinitions: TreeNodeDefinitionMap
 ): Array<{ id: string; source: string; tree: BtNode }> {
@@ -957,9 +957,9 @@ function normalizeGitHubBlobUrlToRaw(url: string): string {
   }
 }
 
-function getPreviewOptions(resourceUri: vscode.Uri): PreviewOptions {
+function getEditorOptions(resourceUri: vscode.Uri): EditorOptions {
   const configuration = vscode.workspace.getConfiguration(
-    "nav2BtPreview",
+    "nav2BtEditor",
     resourceUri
   );
 
@@ -985,19 +985,19 @@ function getPreviewOptions(resourceUri: vscode.Uri): PreviewOptions {
 
 function getIncludeFullBehaviorTreeSetting(resourceUri: vscode.Uri): boolean {
   return vscode.workspace
-    .getConfiguration("nav2BtPreview", resourceUri)
+    .getConfiguration("nav2BtEditor", resourceUri)
     .get<boolean>("includeFullBehaviorTree", false);
 }
 
 function getAutoSaveEditsSetting(resourceUri: vscode.Uri): boolean {
   return vscode.workspace
-    .getConfiguration("nav2BtPreview", resourceUri)
+    .getConfiguration("nav2BtEditor", resourceUri)
     .get<boolean>("autoSaveEdits", true);
 }
 
 function getAllowEmptyAttributesSetting(resourceUri: vscode.Uri): boolean {
   return vscode.workspace
-    .getConfiguration("nav2BtPreview", resourceUri)
+    .getConfiguration("nav2BtEditor", resourceUri)
     .get<boolean>("allowEmptyAttributes", false);
 }
 

@@ -3,15 +3,15 @@ const vscode = acquireVsCodeApi();
 const nodes = window.initialBtNodes ?? [];
 const treeNodeDefinitions = window.initialTreeNodeDefinitions ?? [];
 const importedBehaviorTrees = window.initialImportedBehaviorTrees ?? [];
-const previewOptions = window.initialPreviewOptions ?? {};
+const editorOptions = window.initialEditorOptions ?? {};
 const openOnlyOneBehaviorTree =
-  previewOptions.openOnlyOneBehaviorTree !== false;
+  editorOptions.openOnlyOneBehaviorTree !== false;
 const autoFitOnTreeChange =
-  previewOptions.autoFitOnTreeChange !== false;
+  editorOptions.autoFitOnTreeChange !== false;
 const allowEmptyAttributes =
-  previewOptions.allowEmptyAttributes === true;
+  editorOptions.allowEmptyAttributes === true;
 const includeFullBehaviorTree =
-  previewOptions.includeFullBehaviorTree === true;
+  editorOptions.includeFullBehaviorTree === true;
 
 let selectedNodePath = window.initialSelectedPath ?? undefined;
 let selectedNodeId = undefined;
@@ -1075,7 +1075,7 @@ function renderDetails(node) {
           `
           : `
             <p class="source-location">
-              New node inserted locally. Source location will be available after reopening or refreshing the preview.
+              New node inserted locally. Source location will be available after reopening or refreshing the editor.
             </p>
             <pre class="xml-preview">${escapeHtml(source?.startTag ?? "")}</pre>
           `

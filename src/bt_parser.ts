@@ -447,7 +447,7 @@ export function moveXmlNodeByPath(
   targetIndex: number
 ): MoveXmlNodeResult {
   if (path.length < 2) {
-    throw new Error("Root XML nodes cannot be reordered from the preview.");
+    throw new Error("Root XML nodes cannot be reordered from the editor.");
   }
 
   const roots = scanXml(xmlText);
@@ -460,7 +460,7 @@ export function moveXmlNodeByPath(
   const parent = target.parent;
 
   if (!parent) {
-    throw new Error("Root XML nodes cannot be reordered from the preview.");
+    throw new Error("Root XML nodes cannot be reordered from the editor.");
   }
 
   const sourceIndex = parent.children.indexOf(target);

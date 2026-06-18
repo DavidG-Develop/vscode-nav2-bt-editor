@@ -1,7 +1,7 @@
 {
-  "name": "vscode-nav2-bt-preview",
-  "displayName": "Nav2 BT Preview",
-  "description": "Simple VS Code previewer for ROS 2 Nav2 and BehaviorTree.CPP XML behavior trees.",
+  "name": "vscode-nav2-bt-editor",
+  "displayName": "Nav2 BT Editor",
+  "description": "Visual editor for ROS 2 Nav2 and BehaviorTree.CPP XML behavior trees.",
   "version": "0.3.1",
   "publisher": "DavidG-Develop",
   "engines": {
@@ -12,80 +12,80 @@
     "Other"
   ],
   "activationEvents": [
-    "onCommand:nav2-bt-preview.openPreview",
-    "onCommand:nav2-bt-preview.importTreeNodesModel",
-    "onCommand:nav2-bt-preview.importTreeNodesModelFromUrl",
-    "onCommand:nav2-bt-preview.importBehaviorTree",
-    "onCommand:nav2-bt-preview.importBehaviorTreeFromUrl",
-    "onCommand:nav2-bt-preview.removeImportedTreeNodeDefinition",
-    "onCommand:nav2-bt-preview.removeImportedBehaviorTree",
-    "onCommand:nav2-bt-preview.clearImportedTreeNodesModel",
-    "onCommand:nav2-bt-preview.clearImportedBehaviorTrees"
+    "onCommand:nav2-bt-editor.openEditor",
+    "onCommand:nav2-bt-editor.importTreeNodesModel",
+    "onCommand:nav2-bt-editor.importTreeNodesModelFromUrl",
+    "onCommand:nav2-bt-editor.importBehaviorTree",
+    "onCommand:nav2-bt-editor.importBehaviorTreeFromUrl",
+    "onCommand:nav2-bt-editor.removeImportedTreeNodeDefinition",
+    "onCommand:nav2-bt-editor.removeImportedBehaviorTree",
+    "onCommand:nav2-bt-editor.clearImportedTreeNodesModel",
+    "onCommand:nav2-bt-editor.clearImportedBehaviorTrees"
   ],
   "main": "./out/extension.js",
   "contributes": {
     "commands": [
       {
-        "command": "nav2-bt-preview.openPreview",
-        "title": "Nav2 BT Preview: Open Preview"
+        "command": "nav2-bt-editor.openEditor",
+        "title": "Nav2 BT Editor: Open Editor"
       },
       {
-        "command": "nav2-bt-preview.importTreeNodesModel",
-        "title": "Nav2 BT Preview: Import TreeNodesModel XML File"
+        "command": "nav2-bt-editor.importTreeNodesModel",
+        "title": "Nav2 BT Editor: Import TreeNodesModel XML File"
       },
       {
-        "command": "nav2-bt-preview.importTreeNodesModelFromUrl",
-        "title": "Nav2 BT Preview: Import TreeNodesModel XML from URL"
+        "command": "nav2-bt-editor.importTreeNodesModelFromUrl",
+        "title": "Nav2 BT Editor: Import TreeNodesModel XML from URL"
       },
       {
-        "command": "nav2-bt-preview.importBehaviorTree",
-        "title": "Nav2 BT Preview: Import BehaviorTree XML as SubTree"
+        "command": "nav2-bt-editor.importBehaviorTree",
+        "title": "Nav2 BT Editor: Import BehaviorTree XML as SubTree"
       },
       {
-        "command": "nav2-bt-preview.importBehaviorTreeFromUrl",
-        "title": "Nav2 BT Preview: Import BehaviorTree XML as SubTree from URL"
+        "command": "nav2-bt-editor.importBehaviorTreeFromUrl",
+        "title": "Nav2 BT Editor: Import BehaviorTree XML as SubTree from URL"
       },
       {
-        "command": "nav2-bt-preview.removeImportedTreeNodeDefinition",
-        "title": "Nav2 BT Preview: Remove Imported TreeNode Definition"
+        "command": "nav2-bt-editor.removeImportedTreeNodeDefinition",
+        "title": "Nav2 BT Editor: Remove Imported TreeNode Definition"
       },
       {
-        "command": "nav2-bt-preview.removeImportedBehaviorTree",
-        "title": "Nav2 BT Preview: Remove Imported BehaviorTree SubTree"
+        "command": "nav2-bt-editor.removeImportedBehaviorTree",
+        "title": "Nav2 BT Editor: Remove Imported BehaviorTree SubTree"
       },
       {
-        "command": "nav2-bt-preview.clearImportedTreeNodesModel",
-        "title": "Nav2 BT Preview: Clear Imported TreeNodesModel Definitions"
+        "command": "nav2-bt-editor.clearImportedTreeNodesModel",
+        "title": "Nav2 BT Editor: Clear Imported TreeNodesModel Definitions"
       },
       {
-        "command": "nav2-bt-preview.clearImportedBehaviorTrees",
-        "title": "Nav2 BT Preview: Clear Imported BehaviorTree SubTrees"
+        "command": "nav2-bt-editor.clearImportedBehaviorTrees",
+        "title": "Nav2 BT Editor: Clear Imported BehaviorTree SubTrees"
       }
     ],
     "configuration": {
-      "title": "Nav2 BT Preview",
+      "title": "Nav2 BT Editor",
       "properties": {
-        "nav2BtPreview.autoSaveEdits": {
+        "nav2BtEditor.autoSaveEdits": {
           "type": "boolean",
           "default": true,
-          "description": "Automatically save the XML file after applying attribute changes from the behavior tree preview."
+          "description": "Automatically save the XML file after applying attribute changes from the behavior tree editor."
         },
-        "nav2BtPreview.allowEmptyAttributes": {
+        "nav2BtEditor.allowEmptyAttributes": {
           "type": "boolean",
           "default": false,
           "description": "Allow empty XML attributes when applying edits. When false, empty attributes are removed from the XML."
         },
-        "nav2BtPreview.openOnlyOneBehaviorTree": {
+        "nav2BtEditor.openOnlyOneBehaviorTree": {
           "type": "boolean",
           "default": true,
           "description": "Show only one BehaviorTree at a time. When false, SubTree nodes can be expanded inline into one combined graph."
         },
-        "nav2BtPreview.autoFitOnTreeChange": {
+        "nav2BtEditor.autoFitOnTreeChange": {
           "type": "boolean",
           "default": true,
           "description": "Automatically fit the graph view after opening, closing, or navigating BehaviorTree/SubTree views. When false, the current zoom and pan are preserved."
         },
-        "nav2BtPreview.includeFullBehaviorTree": {
+        "nav2BtEditor.includeFullBehaviorTree": {
           "type": "boolean",
           "default": false,
           "description": "When adding an imported BehaviorTree as a SubTree, also insert the full referenced BehaviorTree XML into the current file. When false, only the SubTree reference is inserted."
@@ -95,14 +95,14 @@
     "menus": {
       "editor/title": [
         {
-          "command": "nav2-bt-preview.openPreview",
+          "command": "nav2-bt-editor.openEditor",
           "when": "resourceExtname == .xml",
           "group": "navigation"
         }
       ],
       "explorer/context": [
         {
-          "command": "nav2-bt-preview.openPreview",
+          "command": "nav2-bt-editor.openEditor",
           "when": "resourceExtname == .xml",
           "group": "navigation"
         }

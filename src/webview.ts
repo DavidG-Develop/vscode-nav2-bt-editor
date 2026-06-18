@@ -1,7 +1,7 @@
 import * as vscode from "vscode";
 import { BtNode, TreeNodeDefinition } from "./bt_parser";
 
-export type PreviewOptions = {
+export type EditorOptions = {
   openOnlyOneBehaviorTree: boolean;
   autoFitOnTreeChange: boolean;
   allowEmptyAttributes: boolean;
@@ -13,16 +13,16 @@ export function getWebviewHtml(
   extensionUri: vscode.Uri,
   nodes: BtNode[],
   selectedPath: number[] | undefined,
-  options: PreviewOptions,
+  options: EditorOptions,
   treeNodeDefinitions: TreeNodeDefinition[],
   importedBehaviorTrees: Array<{ id: string; source: string; tree: BtNode }>
 ): string {
   const scriptUri = webview.asWebviewUri(
-    vscode.Uri.joinPath(extensionUri, "media", "preview.js")
+    vscode.Uri.joinPath(extensionUri, "media", "editor.js")
   );
 
   const styleUri = webview.asWebviewUri(
-    vscode.Uri.joinPath(extensionUri, "media", "preview.css")
+    vscode.Uri.joinPath(extensionUri, "media", "editor.css")
   );
 
   const nonce = getNonce();
@@ -47,7 +47,7 @@ export function getWebviewHtml(
   >
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <link href="${styleUri}" rel="stylesheet">
-  <title>Nav2 BT Preview</title>
+  <title>Nav2 BT Editor</title>
 </head>
 <body>
   <div class="app">
@@ -66,7 +66,7 @@ export function getWebviewHtml(
   <script nonce="${nonce}">
     window.initialBtNodes = ${initialData};
     window.initialSelectedPath = ${initialSelectedPath};
-    window.initialPreviewOptions = ${initialOptions};
+    window.initialEditorOptions = ${initialOptions};
     window.initialTreeNodeDefinitions = ${initialDefinitions};
     window.initialImportedBehaviorTrees = ${initialImportedBehaviorTrees};
   </script>
