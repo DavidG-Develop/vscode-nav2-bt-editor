@@ -64,6 +64,11 @@ export type DeleteXmlNodeResult = {
   deletedPath: number[];
 };
 
+export type MoveXmlNodeResult = {
+  xmlText: string;
+  movedPath: number[];
+};
+
 type InternalXmlNode = Omit<
   BtNode,
   "kind" | "children" | "definitionKnown" | "definition"
@@ -430,6 +435,80 @@ export function deleteBehaviorTreeById(
     ),
     deletedPath: target.source.path
   };
+}
+
+export function moveXmlNodeByPath(
+  xmlText: string,
+  path: number[],
+  targetIndex: number
+): MoveXmlNodeResult {
+  if (path.length < 2) {
+    throw new Error("Root XML nodes cannot be reordered from the preview.");
+  }
+
+  const roots = scanXml(xmlText);
+  const target = findNodeByPath(roots, path);
+
+  if (!target) {
+    throw new Error(`Could not find XML node at path [${path.join(", ")}].`);
+  }
+
+  const parent = target.parent;
+
+  if (!parent) {
+    throw new Error("Root XML nodes cannot be reordered from the preview.");
+  }
+
+  const sourceIndex = parent.children.indexOf(target);
+
+  if (sourceIndex < 0) {
+    throw new Error(`Could not find XML node at path [${path.join(", ")}].`);
+  }
+
+  const clampedTargetIndex = clampIndex(targetIndex, 0, parent.children.length - 1);
+
+  if (clampedTargetIndex === sourceIndex) {
+    return {
+      xmlText,
+      movedPath: target.source.path
+    };
+  }
+
+  const remainingSiblings = parent.children.filter((child) => child !== target);
+  const insertionIndex = clampIndex(
+    clampedTargetIndex,
+    0,
+    remainingSiblings.length
+  );
+  const targetRange = getNodeDeletionRange(xmlText, target);
+  const movingXml = xmlText.slice(targetRange.start, targetRange.end);
+  const insertionOffsetBeforeRemoval =
+    insertionIndex < remainingSiblings.length
+      ? getNodeDeletionRange(xmlText, remainingSiblings[insertionIndex]).start
+      : parent.closeTag?.startOffset ?? parent.source.endOpenTagOffset;
+  const xmlWithoutTarget =
+    xmlText.slice(0, targetRange.start) + xmlText.slice(targetRange.end);
+  const removedLength = targetRange.end - targetRange.start;
+  const insertionOffset =
+    insertionOffsetBeforeRemoval > targetRange.start
+      ? insertionOffsetBeforeRemoval - removedLength
+      : insertionOffsetBeforeRemoval;
+
+  return {
+    xmlText: removeBlankXmlLines(
+      xmlWithoutTarget.slice(0, insertionOffset) +
+      movingXml +
+      xmlWithoutTarget.slice(insertionOffset)
+    ),
+    movedPath: [
+      ...parent.source.path,
+      insertionIndex
+    ]
+  };
+}
+
+function clampIndex(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
 }
 
 function getNodeDeletionRange(

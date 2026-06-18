@@ -43,6 +43,8 @@ let currentViewportGroup = undefined;
 let currentSvg = undefined;
 let currentBounds = undefined;
 let currentLayoutRoots = [];
+let nodeDragState = undefined;
+let suppressNextNodeClick = false;
 
 initializeActiveRoot();
 attachGlobalKeyboardHandlers();
@@ -651,14 +653,21 @@ function drawNodes(parent, node) {
     group.classList.add("selected");
   }
 
-  group.style.cursor = "pointer";
+  group.style.cursor = canMoveNode(node) ? "grab" : "pointer";
 
   group.addEventListener("pointerdown", (event) => {
     event.stopPropagation();
+    startNodeDrag(event, node, group);
   });
 
   group.addEventListener("click", (event) => {
     event.stopPropagation();
+
+    if (suppressNextNodeClick) {
+      suppressNextNodeClick = false;
+      return;
+    }
+
     selectNode(node, false);
   });
 
@@ -693,6 +702,177 @@ function drawNodes(parent, node) {
   for (const child of node.children ?? []) {
     drawNodes(parent, child);
   }
+}
+
+function canMoveNode(node) {
+  const path = node.source?.path;
+
+  if (!Array.isArray(path) || path.length < 2) {
+    return false;
+  }
+
+  const siblings = getSiblingNodes(node);
+  return siblings.length > 1;
+}
+
+function startNodeDrag(event, node, group) {
+  if (!canMoveNode(node) || event.button !== 0) {
+    return;
+  }
+
+  group.setPointerCapture(event.pointerId);
+  group.style.cursor = "grabbing";
+
+  nodeDragState = {
+    node,
+    group,
+    pointerId: event.pointerId,
+    startClientX: event.clientX,
+    currentClientX: event.clientX,
+    startNodeX: node.x,
+    hasMoved: false
+  };
+
+  group.addEventListener("pointermove", handleNodeDragMove);
+  group.addEventListener("pointerup", finishNodeDrag);
+  group.addEventListener("pointercancel", cancelNodeDrag);
+}
+
+function handleNodeDragMove(event) {
+  if (!nodeDragState || event.pointerId !== nodeDragState.pointerId) {
+    return;
+  }
+
+  event.preventDefault();
+  event.stopPropagation();
+
+  const dx = (event.clientX - nodeDragState.startClientX) / viewState.scale;
+
+  if (Math.abs(event.clientX - nodeDragState.startClientX) > 4) {
+    nodeDragState.hasMoved = true;
+  }
+
+  nodeDragState.currentClientX = event.clientX;
+  nodeDragState.group.setAttribute(
+    "transform",
+    `translate(${dx} 0)`
+  );
+}
+
+function finishNodeDrag(event) {
+  if (!nodeDragState || event.pointerId !== nodeDragState.pointerId) {
+    return;
+  }
+
+  event.preventDefault();
+  event.stopPropagation();
+
+  const dragState = nodeDragState;
+  cleanupNodeDrag(event.pointerId);
+
+  if (!dragState.hasMoved) {
+    return;
+  }
+
+  suppressNextNodeClick = true;
+
+  const dx = (event.clientX - dragState.startClientX) / viewState.scale;
+  const draggedCenterX = dragState.startNodeX + dx;
+  const targetIndex = getReorderTargetIndex(dragState.node, draggedCenterX);
+  const originalPath = [...(dragState.node.source?.path ?? [])];
+
+  if (targetIndex === undefined) {
+    renderTree();
+    return;
+  }
+
+  const movedPath = applyLocalNodeMove(originalPath, targetIndex);
+
+  if (!movedPath) {
+    renderTree();
+    return;
+  }
+
+  selectedNodePath = movedPath;
+  selectedNodeId = undefined;
+
+  vscode.postMessage({
+    type: "moveNode",
+    path: originalPath,
+    targetIndex
+  });
+
+  renderTree();
+}
+
+function cancelNodeDrag(event) {
+  if (!nodeDragState || event.pointerId !== nodeDragState.pointerId) {
+    return;
+  }
+
+  cleanupNodeDrag(event.pointerId);
+  renderTree();
+}
+
+function cleanupNodeDrag(pointerId) {
+  if (!nodeDragState) {
+    return;
+  }
+
+  nodeDragState.group.removeEventListener("pointermove", handleNodeDragMove);
+  nodeDragState.group.removeEventListener("pointerup", finishNodeDrag);
+  nodeDragState.group.removeEventListener("pointercancel", cancelNodeDrag);
+  nodeDragState.group.style.cursor = canMoveNode(nodeDragState.node)
+    ? "grab"
+    : "pointer";
+
+  try {
+    nodeDragState.group.releasePointerCapture(pointerId);
+  } catch {
+    // Pointer capture may already be released by the webview.
+  }
+
+  nodeDragState = undefined;
+}
+
+function getReorderTargetIndex(node, draggedCenterX) {
+  const siblings = getSiblingNodes(node);
+
+  if (siblings.length <= 1) {
+    return undefined;
+  }
+
+  const orderedSiblings = [...siblings].sort((left, right) => left.x - right.x);
+  const currentIndex = siblings.indexOf(node);
+  const withoutDragged = orderedSiblings.filter((sibling) => sibling !== node);
+
+  let insertionIndex = withoutDragged.length;
+
+  for (let index = 0; index < withoutDragged.length; index += 1) {
+    if (draggedCenterX < withoutDragged[index].x) {
+      insertionIndex = index;
+      break;
+    }
+  }
+
+  if (insertionIndex === currentIndex) {
+    return currentIndex;
+  }
+
+  return insertionIndex;
+}
+
+function getSiblingNodes(node) {
+  const path = node.source?.path;
+
+  if (!Array.isArray(path) || path.length < 2) {
+    return [];
+  }
+
+  const parentPath = path.slice(0, -1);
+  const parent = findNodeByPathInForest(currentLayoutRoots, parentPath);
+
+  return parent?.children ?? [];
 }
 
 function drawNodeShape(group, node) {
@@ -1754,6 +1934,49 @@ function applyLocalNodeDelete(pathToDelete, deleteReferencedBehaviorTree, nodeTo
   activeRootPath =
     findRootContainingPath(nodes, selectedNodePath)?.source?.path ??
     findPreferredTopRoot(nodes)?.source?.path;
+}
+
+function applyLocalNodeMove(pathToMove, targetIndex) {
+  if (!Array.isArray(pathToMove) || pathToMove.length < 2) {
+    return undefined;
+  }
+
+  const parentPath = pathToMove.slice(0, -1);
+  const sourceIndex = pathToMove[pathToMove.length - 1];
+  const parent = findNodeByPathInForest(nodes, parentPath);
+
+  if (!parent || !Array.isArray(parent.children)) {
+    return undefined;
+  }
+
+  if (
+    sourceIndex < 0 ||
+    sourceIndex >= parent.children.length ||
+    parent.children.length <= 1
+  ) {
+    return undefined;
+  }
+
+  const clampedTargetIndex = clamp(
+    targetIndex,
+    0,
+    parent.children.length - 1
+  );
+
+  if (clampedTargetIndex === sourceIndex) {
+    return pathToMove;
+  }
+
+  const [movedNode] = parent.children.splice(sourceIndex, 1);
+  const insertionIndex = clamp(clampedTargetIndex, 0, parent.children.length);
+
+  parent.children.splice(insertionIndex, 0, movedNode);
+  refreshRootPaths();
+
+  return [
+    ...parentPath,
+    insertionIndex
+  ];
 }
 
 function collectReferencedBehaviorTreeIdsForDelete(roots, nodeToDelete) {

@@ -9,6 +9,7 @@ import {
   insertBehaviorTreeAfterPath,
   insertBehaviorTreeXmlAfterPath,
   insertXmlChildNodeByPath,
+  moveXmlNodeByPath,
   parseBehaviorTreeTemplatesFromXml,
   parseBehaviorTreeXml,
   parseTreeNodeDefinitionsFromXml,
@@ -51,6 +52,11 @@ type WebviewMessage =
       type: "deleteNode";
       path: number[];
       deleteReferencedBehaviorTree?: boolean;
+    }
+  | {
+      type: "moveNode";
+      path: number[];
+      targetIndex: number;
     };
 
 type ImportedDefinitionQuickPickItem = vscode.QuickPickItem & {
@@ -288,6 +294,37 @@ export function activate(context: vscode.ExtensionContext): void {
               if (!saved) {
                 vscode.window.showWarningMessage(
                   "XML node was deleted, but the file could not be saved automatically."
+                );
+              }
+            }
+
+            return;
+          }
+
+          if (message.type === "moveNode") {
+            suppressDocumentRefresh(2500);
+
+            const result = await moveNode(targetDocument, message);
+
+            if (!result) {
+              suppressDocumentRefreshUntil = 0;
+              return;
+            }
+
+            selectedPath = result.movedPath;
+
+            const autoSaveEdits = getAutoSaveEditsSetting(targetDocument.uri);
+
+            if (autoSaveEdits) {
+              suppressDocumentRefresh(2500);
+
+              const saved = await targetDocument.save();
+
+              suppressDocumentRefresh(2500);
+
+              if (!saved) {
+                vscode.window.showWarningMessage(
+                  "XML node was moved, but the file could not be saved automatically."
                 );
               }
             }
@@ -1213,6 +1250,43 @@ async function deleteNode(
 
   return {
     nextSelectedPath: getParentPath(message.path)
+  };
+}
+
+async function moveNode(
+  document: vscode.TextDocument,
+  message: Extract<WebviewMessage, { type: "moveNode" }>
+): Promise<{ movedPath: number[] } | undefined> {
+  const xmlText = document.getText();
+
+  let result;
+
+  try {
+    result = moveXmlNodeByPath(xmlText, message.path, message.targetIndex);
+  } catch (error) {
+    const messageText = error instanceof Error ? error.message : String(error);
+    vscode.window.showErrorMessage(messageText);
+    return undefined;
+  }
+
+  if (result.xmlText === xmlText) {
+    return {
+      movedPath: result.movedPath
+    };
+  }
+
+  const success = await replaceFullDocument(
+    document,
+    result.xmlText,
+    "Failed to move XML node."
+  );
+
+  if (!success) {
+    return undefined;
+  }
+
+  return {
+    movedPath: result.movedPath
   };
 }
 
