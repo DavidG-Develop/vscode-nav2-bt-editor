@@ -993,15 +993,6 @@ function scanXml(xmlText: string): InternalXmlNode[] {
     }
 
     const closeIndex = findOpenTagEnd(xmlText, openIndex);
-
-    if (closeIndex < 0) {
-      const location = offsetToLineColumn(xmlText, openIndex);
-
-      throw new Error(
-        `Malformed XML at line ${location.line + 1}, column ${location.column + 1}: opening tag is missing ">".`
-      );
-    }
-
     const openTag = xmlText.slice(openIndex, closeIndex + 1);
     const tag = extractTagName(openTag);
 
@@ -1010,7 +1001,7 @@ function scanXml(xmlText: string): InternalXmlNode[] {
       continue;
     }
 
-    const attributes = extractAttributes(openTag);
+    const attributes = extractAttributes(openTag, xmlText, openIndex);
     const parent = stack[stack.length - 1];
 
     const siblingIndex = parent ? parent.children.length : roots.length;
@@ -1113,6 +1104,7 @@ function findNodeByBehaviorTreeForestPath(
 
 function findOpenTagEnd(xmlText: string, startOffset: number): number {
   let quote: string | undefined;
+  let quoteOffset: number | undefined;
 
   for (let i = startOffset + 1; i < xmlText.length; i += 1) {
     const char = xmlText[i];
@@ -1120,6 +1112,7 @@ function findOpenTagEnd(xmlText: string, startOffset: number): number {
     if (quote) {
       if (char === quote) {
         quote = undefined;
+        quoteOffset = undefined;
       }
 
       continue;
@@ -1127,11 +1120,16 @@ function findOpenTagEnd(xmlText: string, startOffset: number): number {
 
     if (char === '"' || char === "'") {
       quote = char;
+      quoteOffset = i;
       continue;
     }
 
     if (char === "<") {
-      return -1;
+      throwMalformedXmlAt(
+        xmlText,
+        startOffset,
+        'opening tag is missing ">" before the next "<"'
+      );
     }
 
     if (char === ">") {
@@ -1139,7 +1137,15 @@ function findOpenTagEnd(xmlText: string, startOffset: number): number {
     }
   }
 
-  return -1;
+  if (quote && quoteOffset !== undefined) {
+    throwMalformedXmlAt(
+      xmlText,
+      quoteOffset,
+      `attribute value is missing closing ${quote} quote`
+    );
+  }
+
+  throwMalformedXmlAt(xmlText, startOffset, 'opening tag is missing ">"');
 }
 
 function extractTagName(openTag: string): string | undefined {
@@ -1152,17 +1158,129 @@ function extractClosingTagName(closeTag: string): string | undefined {
   return match?.[1];
 }
 
-function extractAttributes(openTag: string): Record<string, string> {
+function extractAttributes(
+  openTag: string,
+  xmlText: string,
+  openOffset: number
+): Record<string, string> {
   const attributes: Record<string, string> = {};
-  const attributeRegex = /([^\s=/>]+)\s*=\s*("([^"]*)"|'([^']*)')/g;
+  const tagMatch = /^<\s*[^\s/>]+/.exec(openTag);
 
-  for (const match of openTag.matchAll(attributeRegex)) {
-    const name = match[1];
-    const value = match[3] ?? match[4] ?? "";
-    attributes[name] = decodeXmlAttribute(value);
+  if (!tagMatch) {
+    return attributes;
+  }
+
+  let index = tagMatch[0].length;
+  const end = getAttributeTextEnd(openTag);
+
+  while (index < end) {
+    while (index < end && /\s/.test(openTag[index])) {
+      index += 1;
+    }
+
+    if (index >= end) {
+      break;
+    }
+
+    const nameStart = index;
+
+    while (index < end && !/[\s=/>]/.test(openTag[index])) {
+      index += 1;
+    }
+
+    const name = openTag.slice(nameStart, index);
+
+    if (!name) {
+      throwMalformedXmlAt(
+        xmlText,
+        openOffset + nameStart,
+        "attribute is missing a name"
+      );
+    }
+
+    if (!isValidXmlName(name)) {
+      throwMalformedXmlAt(
+        xmlText,
+        openOffset + nameStart,
+        `invalid attribute name "${name}"`
+      );
+    }
+
+    while (index < end && /\s/.test(openTag[index])) {
+      index += 1;
+    }
+
+    if (openTag[index] !== "=") {
+      throwMalformedXmlAt(
+        xmlText,
+        openOffset + index,
+        `attribute "${name}" is missing "="`
+      );
+    }
+
+    index += 1;
+
+    while (index < end && /\s/.test(openTag[index])) {
+      index += 1;
+    }
+
+    const quote = openTag[index];
+
+    if (quote !== '"' && quote !== "'") {
+      throwMalformedXmlAt(
+        xmlText,
+        openOffset + index,
+        `attribute "${name}" value must be quoted`
+      );
+    }
+
+    index += 1;
+
+    const valueStart = index;
+
+    while (index < end && openTag[index] !== quote) {
+      index += 1;
+    }
+
+    if (index >= end) {
+      throwMalformedXmlAt(
+        xmlText,
+        openOffset + valueStart,
+        `attribute "${name}" is missing a closing quote`
+      );
+    }
+
+    if (Object.prototype.hasOwnProperty.call(attributes, name)) {
+      throwMalformedXmlAt(
+        xmlText,
+        openOffset + nameStart,
+        `duplicate attribute "${name}"`
+      );
+    }
+
+    attributes[name] = decodeXmlAttribute(openTag.slice(valueStart, index));
+    index += 1;
   }
 
   return attributes;
+}
+
+function getAttributeTextEnd(openTag: string): number {
+  let end = openTag.length - 1;
+
+  while (end > 0 && /\s/.test(openTag[end - 1])) {
+    end -= 1;
+  }
+
+  if (openTag[end - 1] === "/") {
+    end -= 1;
+  }
+
+  while (end > 0 && /\s/.test(openTag[end - 1])) {
+    end -= 1;
+  }
+
+  return end;
 }
 
 function buildSelfClosingTag(
@@ -1179,9 +1297,25 @@ function buildSelfClosingTag(
 }
 
 function validateXmlName(value: string, label: string): void {
-  if (!/^[A-Za-z_][A-Za-z0-9_.:-]*$/.test(value)) {
+  if (!isValidXmlName(value)) {
     throw new Error(`Invalid XML ${label}: ${value}`);
   }
+}
+
+function isValidXmlName(value: string): boolean {
+  return /^[A-Za-z_][A-Za-z0-9_.:-]*$/.test(value);
+}
+
+function throwMalformedXmlAt(
+  xmlText: string,
+  offset: number,
+  message: string
+): never {
+  const location = offsetToLineColumn(xmlText, offset);
+
+  throw new Error(
+    `Malformed XML at line ${location.line + 1}, column ${location.column + 1}: ${message}.`
+  );
 }
 
 function getLineIndentAtOffset(text: string, offset: number): string {
