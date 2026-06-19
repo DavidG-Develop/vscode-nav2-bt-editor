@@ -31,35 +31,35 @@
       },
       {
         "command": "nav2-bt-editor.importTreeNodesModel",
-        "title": "Nav2 BT Editor: Import TreeNodesModel XML File"
+        "title": "Nav2 BT Editor: Add TreeNodesModel Definitions from XML File"
       },
       {
         "command": "nav2-bt-editor.importTreeNodesModelFromUrl",
-        "title": "Nav2 BT Editor: Import TreeNodesModel XML from URL"
+        "title": "Nav2 BT Editor: Add TreeNodesModel Definitions from URL"
       },
       {
         "command": "nav2-bt-editor.importBehaviorTree",
-        "title": "Nav2 BT Editor: Import BehaviorTree XML as SubTree"
+        "title": "Nav2 BT Editor: Add BehaviorTree SubTrees from XML File"
       },
       {
         "command": "nav2-bt-editor.importBehaviorTreeFromUrl",
-        "title": "Nav2 BT Editor: Import BehaviorTree XML as SubTree from URL"
+        "title": "Nav2 BT Editor: Add BehaviorTree SubTrees from URL"
       },
       {
         "command": "nav2-bt-editor.removeImportedTreeNodeDefinition",
-        "title": "Nav2 BT Editor: Remove Imported TreeNode Definition"
+        "title": "Nav2 BT Editor: Remove Selected TreeNodesModel Definitions"
       },
       {
         "command": "nav2-bt-editor.removeImportedBehaviorTree",
-        "title": "Nav2 BT Editor: Remove Imported BehaviorTree SubTree"
+        "title": "Nav2 BT Editor: Remove Selected BehaviorTree SubTrees"
       },
       {
         "command": "nav2-bt-editor.clearImportedTreeNodesModel",
-        "title": "Nav2 BT Editor: Clear Imported TreeNodesModel Definitions"
+        "title": "Nav2 BT Editor: Clear All TreeNodesModel Definitions"
       },
       {
         "command": "nav2-bt-editor.clearImportedBehaviorTrees",
-        "title": "Nav2 BT Editor: Clear Imported BehaviorTree SubTrees"
+        "title": "Nav2 BT Editor: Clear All BehaviorTree SubTrees"
       }
     ],
     "configuration": {

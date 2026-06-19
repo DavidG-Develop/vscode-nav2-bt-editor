@@ -29,6 +29,7 @@ type WebviewMessage =
     }
   | {
       type: "revealNode";
+      path?: number[];
       startOffset: number;
     }
   | {
@@ -169,7 +170,7 @@ export function activate(context: vscode.ExtensionContext): void {
           }
 
           if (message.type === "revealNode") {
-            await revealNode(targetDocument, message.startOffset);
+            await revealNode(targetDocument, message.path, message.startOffset);
             return;
           }
 
@@ -329,6 +330,12 @@ export function activate(context: vscode.ExtensionContext): void {
               }
             }
 
+            postParsedSourceMetadataUpdate(
+              panel.webview,
+              context,
+              targetDocument
+            );
+
             return;
           }
         },
@@ -404,7 +411,7 @@ export function activate(context: vscode.ExtensionContext): void {
           XML: ["xml"],
           "All files": ["*"]
         },
-        title: "Import BehaviorTree.CPP TreeNodesModel XML"
+        title: "Add TreeNodesModel Definitions from XML File"
       });
 
       const selectedFile = selectedFiles?.[0];
@@ -429,7 +436,7 @@ export function activate(context: vscode.ExtensionContext): void {
     "nav2-bt-editor.importTreeNodesModelFromUrl",
     async () => {
       const url = await vscode.window.showInputBox({
-        title: "Import BehaviorTree.CPP TreeNodesModel XML from URL",
+        title: "Add TreeNodesModel Definitions from URL",
         prompt:
           "Paste a URL to an XML file. GitHub blob URLs are converted to raw URLs automatically.",
         placeHolder:
@@ -472,7 +479,7 @@ export function activate(context: vscode.ExtensionContext): void {
           XML: ["xml"],
           "All files": ["*"]
         },
-        title: "Import BehaviorTree XML as SubTree"
+        title: "Add BehaviorTree SubTrees from XML File"
       });
 
       const selectedFile = selectedFiles?.[0];
@@ -497,7 +504,7 @@ export function activate(context: vscode.ExtensionContext): void {
     "nav2-bt-editor.importBehaviorTreeFromUrl",
     async () => {
       const url = await vscode.window.showInputBox({
-        title: "Import BehaviorTree XML as SubTree from URL",
+        title: "Add BehaviorTree SubTrees from URL",
         prompt:
           "Paste a URL to an XML file. GitHub blob URLs are converted to raw URLs automatically.",
         placeHolder:
@@ -719,8 +726,8 @@ async function removeImportedTreeNodeDefinitions(
   );
 
   const selectedItems = await vscode.window.showQuickPick(items, {
-    title: "Remove Imported TreeNode Definitions",
-    placeHolder: "Select one or more imported node definitions to remove",
+    title: "Remove Selected TreeNodesModel Definitions",
+    placeHolder: "Select one or more TreeNodesModel definitions to remove",
     canPickMany: true
   });
 
@@ -778,8 +785,8 @@ async function removeImportedBehaviorTrees(
   );
 
   const selectedItems = await vscode.window.showQuickPick(items, {
-    title: "Remove Imported BehaviorTree Subtree Templates",
-    placeHolder: "Select one or more imported BehaviorTree templates to remove",
+    title: "Remove Selected BehaviorTree SubTrees",
+    placeHolder: "Select one or more BehaviorTree SubTrees to remove",
     canPickMany: true
   });
 
@@ -1001,10 +1008,46 @@ function getAllowEmptyAttributesSetting(resourceUri: vscode.Uri): boolean {
     .get<boolean>("allowEmptyAttributes", false);
 }
 
+function postParsedSourceMetadataUpdate(
+  webview: vscode.Webview,
+  context: vscode.ExtensionContext,
+  document: vscode.TextDocument
+): void {
+  try {
+    const nodes = parseBehaviorTreeXml(
+      document.getText(),
+      getImportedTreeNodeDefinitions(context)
+    );
+
+    void webview.postMessage({
+      type: "sourceMetadataUpdated",
+      nodes
+    });
+  } catch {
+    // The next successful parse will refresh source metadata.
+  }
+}
+
 async function revealNode(
   document: vscode.TextDocument,
-  startOffset: number
+  path: number[] | undefined,
+  fallbackStartOffset: number
 ): Promise<void> {
+  let startOffset = fallbackStartOffset;
+
+  if (path) {
+    try {
+      const parsedNodes = parseBehaviorTreeXml(document.getText());
+      const parsedNode = findParsedNodeByPath(parsedNodes, path);
+
+      if (parsedNode) {
+        startOffset = parsedNode.source.startOffset;
+      }
+    } catch {
+      startOffset = fallbackStartOffset;
+    }
+  }
+
   if (startOffset < 0) {
     vscode.window.showInformationMessage(
       "This node has not been reparsed yet, so no source location is available."

@@ -100,13 +100,13 @@ Many Nav2 and custom BehaviorTree.CPP projects define node ports in a `TreeNodes
 Use:
 
 ```text
-Nav2 BT Editor: Import TreeNodesModel XML File
+Nav2 BT Editor: Add TreeNodesModel Definitions from XML File
 ```
 
 or:
 
 ```text
-Nav2 BT Editor: Import TreeNodesModel XML from URL
+Nav2 BT Editor: Add TreeNodesModel Definitions from URL
 ```
 
 GitHub blob URLs are converted to raw URLs automatically.
@@ -120,13 +120,13 @@ External `BehaviorTree` XML files can be imported and reused when adding `SubTre
 Use:
 
 ```text
-Nav2 BT Editor: Import BehaviorTree XML as SubTree
+Nav2 BT Editor: Add BehaviorTree SubTrees from XML File
 ```
 
 or:
 
 ```text
-Nav2 BT Editor: Import BehaviorTree XML as SubTree from URL
+Nav2 BT Editor: Add BehaviorTree SubTrees from URL
 ```
 
 Each complete `BehaviorTree` with an `ID` is stored as a reusable template. Imported templates are remembered across VS Code sessions.
@@ -138,10 +138,10 @@ If `nav2BtEditor.includeFullBehaviorTree` is enabled and the selected template r
 Use these commands to remove imported definitions without editing your source XML files:
 
 ```text
-Nav2 BT Editor: Remove Imported TreeNode Definition
-Nav2 BT Editor: Clear Imported TreeNodesModel Definitions
-Nav2 BT Editor: Remove Imported BehaviorTree SubTree
-Nav2 BT Editor: Clear Imported BehaviorTree SubTrees
+Nav2 BT Editor: Remove Selected TreeNodesModel Definitions
+Nav2 BT Editor: Clear All TreeNodesModel Definitions
+Nav2 BT Editor: Remove Selected BehaviorTree SubTrees
+Nav2 BT Editor: Clear All BehaviorTree SubTrees
 ```
 
 ## SubTree navigation
@@ -223,14 +223,14 @@ When disabled, only the `SubTree` reference is inserted. This is the default bec
 | Command | Description |
 |---|---|
 | `Nav2 BT Editor: Open Editor` | Open the visual behavior tree editor for the selected XML file. |
-| `Nav2 BT Editor: Import TreeNodesModel XML File` | Import node definitions from a local XML file. |
-| `Nav2 BT Editor: Import TreeNodesModel XML from URL` | Import node definitions from a URL. |
-| `Nav2 BT Editor: Import BehaviorTree XML as SubTree` | Import BehaviorTree definitions from a local XML file as SubTree templates. |
-| `Nav2 BT Editor: Import BehaviorTree XML as SubTree from URL` | Import BehaviorTree definitions from a URL as SubTree templates. |
-| `Nav2 BT Editor: Remove Imported TreeNode Definition` | Show imported definitions and remove selected entries. |
-| `Nav2 BT Editor: Clear Imported TreeNodesModel Definitions` | Remove all imported node definitions. |
-| `Nav2 BT Editor: Remove Imported BehaviorTree SubTree` | Show imported SubTree templates and remove selected entries. |
-| `Nav2 BT Editor: Clear Imported BehaviorTree SubTrees` | Remove all imported SubTree templates. |
+| `Nav2 BT Editor: Add TreeNodesModel Definitions from XML File` | Add node definitions from a local XML file. |
+| `Nav2 BT Editor: Add TreeNodesModel Definitions from URL` | Add node definitions from a URL. |
+| `Nav2 BT Editor: Add BehaviorTree SubTrees from XML File` | Add BehaviorTree definitions from a local XML file as SubTree templates. |
+| `Nav2 BT Editor: Add BehaviorTree SubTrees from URL` | Add BehaviorTree definitions from a URL as SubTree templates. |
+| `Nav2 BT Editor: Remove Selected TreeNodesModel Definitions` | Show stored TreeNodesModel definitions and remove selected entries. |
+| `Nav2 BT Editor: Clear All TreeNodesModel Definitions` | Remove all stored TreeNodesModel definitions. |
+| `Nav2 BT Editor: Remove Selected BehaviorTree SubTrees` | Show stored SubTree templates and remove selected entries. |
+| `Nav2 BT Editor: Clear All BehaviorTree SubTrees` | Remove all stored SubTree templates. |
 
 The extension command IDs use the `nav2-bt-editor.*` namespace, and settings use the `nav2BtEditor.*` namespace.
 

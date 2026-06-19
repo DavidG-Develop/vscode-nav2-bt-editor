@@ -48,6 +48,7 @@ let suppressNextNodeClick = false;
 
 initializeActiveRoot();
 attachGlobalKeyboardHandlers();
+attachExtensionMessageHandlers();
 
 function initializeActiveRoot() {
   const preferredRoot = findPreferredTopRoot(nodes);
@@ -87,6 +88,61 @@ function attachGlobalKeyboardHandlers() {
         Boolean(findBehaviorTreeById(nodes, selectedNode.attributes.ID))
     );
   });
+}
+
+function attachExtensionMessageHandlers() {
+  window.addEventListener("message", (event) => {
+    const message = event.data;
+
+    if (message?.type !== "sourceMetadataUpdated") {
+      return;
+    }
+
+    applyParsedSourceMetadataUpdate(message.nodes);
+  });
+}
+
+function applyParsedSourceMetadataUpdate(parsedNodes) {
+  if (!Array.isArray(parsedNodes)) {
+    return;
+  }
+
+  for (const parsedNode of parsedNodes) {
+    mergeParsedNodeMetadata(parsedNode);
+  }
+
+  const selectedNode = findNodeByPathInForest(nodes, selectedNodePath);
+
+  if (selectedNode) {
+    renderDetails(selectedNode);
+  }
+}
+
+function mergeParsedNodeMetadata(parsedNode) {
+  const path = parsedNode?.source?.path;
+
+  if (!Array.isArray(path)) {
+    return;
+  }
+
+  const node = findNodeByPathInForest(nodes, path);
+
+  if (node) {
+    updateNodeMetadata(node, parsedNode);
+  }
+
+  for (const child of parsedNode.children ?? []) {
+    mergeParsedNodeMetadata(child);
+  }
+}
+
+function updateNodeMetadata(node, parsedNode) {
+  node.source = parsedNode.source;
+  node.attributes = parsedNode.attributes;
+  node.name = parsedNode.name;
+  node.kind = parsedNode.kind;
+  node.definitionKnown = parsedNode.definitionKnown;
+  node.definition = parsedNode.definition;
 }
 
 function isTextEditingElement(element) {
@@ -1068,7 +1124,7 @@ function renderDetails(node) {
         source && source.startOffset >= 0
           ? `
             <p class="source-location">
-              Line ${source.line + 1}, column ${source.column + 1}
+              ${escapeHtml(formatSourceLocation(source))}
             </p>
             <pre class="xml-preview">${escapeHtml(source.startTag)}</pre>
             <button id="reveal-node-button">Reveal in XML</button>
@@ -1094,6 +1150,7 @@ function renderDetails(node) {
     revealButton.addEventListener("click", () => {
       vscode.postMessage({
         type: "revealNode",
+        path: node.source?.path,
         startOffset: source.startOffset
       });
     });
@@ -1103,6 +1160,18 @@ function renderDetails(node) {
   attachDeleteHandlers(node);
   attachAddBehaviorTreeHandlers(node);
   attachAddChildHandlers(node);
+}
+
+function formatSourceLocation(source) {
+  const startLine = source.line + 1;
+  const column = source.column + 1;
+  const lineSpan = (source.startTag.match(/\n/g) ?? []).length;
+
+  if (lineSpan === 0) {
+    return `Line ${startLine}, column ${column}`;
+  }
+
+  return `Lines ${startLine}-${startLine + lineSpan}, column ${column}`;
 }
 
 function getDisplayCategory(node) {
