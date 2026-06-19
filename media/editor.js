@@ -103,12 +103,49 @@ function attachExtensionMessageHandlers() {
   window.addEventListener("message", (event) => {
     const message = event.data;
 
-    if (message?.type !== "sourceMetadataUpdated") {
+    if (message?.type === "sourceMetadataUpdated") {
+      applyParsedSourceMetadataUpdate(message.nodes);
       return;
     }
 
-    applyParsedSourceMetadataUpdate(message.nodes);
+    if (message?.type === "documentSynced") {
+      applyParsedDocumentSync(
+        message.nodes,
+        message.selectedPath,
+        Boolean(message.refit)
+      );
+    }
   });
+}
+
+function applyParsedDocumentSync(parsedNodes, nextSelectedPath, refit) {
+  if (!Array.isArray(parsedNodes)) {
+    return;
+  }
+
+  nodes.splice(0, nodes.length, ...parsedNodes);
+
+  selectedNodePath = Array.isArray(nextSelectedPath)
+    ? nextSelectedPath
+    : undefined;
+  selectedNodeId = undefined;
+
+  const selectedRoot = findRootContainingPath(nodes, selectedNodePath);
+
+  if (selectedRoot) {
+    activeRootPath = selectedRoot.source?.path;
+  } else if (!findNodeByPathInForest(nodes, activeRootPath)) {
+    activeRootPath = findPreferredTopRoot(nodes)?.source?.path;
+  }
+
+  expandedSubTreeKeys = pruneUnreachableExpandedSubTrees();
+  renderTree();
+
+  if (refit) {
+    requestAnimationFrame(() => {
+      applyPostTreeChangeView();
+    });
+  }
 }
 
 function applyParsedSourceMetadataUpdate(parsedNodes) {

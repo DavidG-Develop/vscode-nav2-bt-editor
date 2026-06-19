@@ -160,6 +160,26 @@ export function activate(context: vscode.ExtensionContext): void {
         return Date.now() < suppressDocumentRefreshUntil;
       }
 
+      function syncWebviewFromDocument(refit = false): void {
+        try {
+          const xmlText = targetDocument.getText();
+          const importedDefinitions = getImportedTreeNodeDefinitions(context);
+          const nodes = parseBehaviorTreeXml(xmlText, importedDefinitions);
+
+          void panel.webview.postMessage({
+            type: "documentSynced",
+            nodes,
+            selectedPath: selectedPath ?? null,
+            refit
+          });
+        } catch (error) {
+          const message =
+            error instanceof Error ? error.message : String(error);
+
+          panel.webview.html = getErrorHtml(message);
+        }
+      }
+
       editorRefreshers.add(scheduleUpdateEditor);
 
       panel.webview.onDidReceiveMessage(
@@ -183,6 +203,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
             if (!updated) {
               suppressDocumentRefreshUntil = 0;
+              syncWebviewFromDocument();
               return;
             }
 
@@ -212,6 +233,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
             if (!result) {
               suppressDocumentRefreshUntil = 0;
+              syncWebviewFromDocument();
               return;
             }
 
@@ -233,6 +255,8 @@ export function activate(context: vscode.ExtensionContext): void {
               }
             }
 
+            syncWebviewFromDocument();
+
             return;
           }
 
@@ -247,6 +271,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
             if (!result) {
               suppressDocumentRefreshUntil = 0;
+              syncWebviewFromDocument();
               return;
             }
 
@@ -268,6 +293,8 @@ export function activate(context: vscode.ExtensionContext): void {
               }
             }
 
+            syncWebviewFromDocument();
+
             return;
           }
 
@@ -278,6 +305,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
             if (!result) {
               suppressDocumentRefreshUntil = 0;
+              syncWebviewFromDocument();
               return;
             }
 
@@ -299,6 +327,8 @@ export function activate(context: vscode.ExtensionContext): void {
               }
             }
 
+            syncWebviewFromDocument();
+
             return;
           }
 
@@ -309,6 +339,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
             if (!result) {
               suppressDocumentRefreshUntil = 0;
+              syncWebviewFromDocument();
               return;
             }
 

@@ -3,6 +3,7 @@
     <Fallback>
       <AlignToDock docking_station="1"/>
       <BackUp backup_dist="33"/>
+      <AlwaysSuccess/>
     </Fallback>
   </BehaviorTree>
 </root>
