@@ -486,10 +486,17 @@ export function moveXmlNodeByPath(
   );
   const targetRange = getNodeDeletionRange(xmlText, target);
   const movingXml = xmlText.slice(targetRange.start, targetRange.end);
+  const isAppendingBeforeParentCloseTag =
+    insertionIndex >= remainingSiblings.length;
+  const normalizedMovingXml = isAppendingBeforeParentCloseTag
+    ? ensureTrailingLineEnding(movingXml, xmlText)
+    : movingXml;
   const insertionOffsetBeforeRemoval =
-    insertionIndex < remainingSiblings.length
+    !isAppendingBeforeParentCloseTag
       ? getNodeDeletionRange(xmlText, remainingSiblings[insertionIndex]).start
-      : parent.closeTag?.startOffset ?? parent.source.endOpenTagOffset;
+      : parent.closeTag
+        ? getLineStartAtOffset(xmlText, parent.closeTag.startOffset)
+        : parent.source.endOpenTagOffset;
   const xmlWithoutTarget =
     xmlText.slice(0, targetRange.start) + xmlText.slice(targetRange.end);
   const removedLength = targetRange.end - targetRange.start;
@@ -501,7 +508,7 @@ export function moveXmlNodeByPath(
   return {
     xmlText: removeBlankXmlLines(
       xmlWithoutTarget.slice(0, insertionOffset) +
-      movingXml +
+      normalizedMovingXml +
       xmlWithoutTarget.slice(insertionOffset)
     ),
     movedPath: [
@@ -513,6 +520,18 @@ export function moveXmlNodeByPath(
 
 function clampIndex(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
+}
+
+function ensureTrailingLineEnding(value: string, xmlText: string): string {
+  if (/\r?\n$/.test(value)) {
+    return value;
+  }
+
+  return `${value}${xmlText.includes("\r\n") ? "\r\n" : "\n"}`;
+}
+
+function getLineStartAtOffset(text: string, offset: number): number {
+  return text.lastIndexOf("\n", Math.max(0, offset - 1)) + 1;
 }
 
 function getNodeDeletionRange(

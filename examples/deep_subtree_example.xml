@@ -36,9 +36,10 @@
                  door_id="{door_id}"
                  _autoremap="true"/>
         <NavigateThroughDoor door_id="{dsadsa}" goal="{meow}"/>
-        <AlignToDock name="align"/><SubTree ID="ThisTreeDoesStuff" _autoremap="false"/>
+        <AlignToDock name="align"/>
         <CloseDoor door_id="{door_id}"/>
-        </Sequence>
+        <SubTree ID="ThisTreeDoesStuff" _autoremap="false"/>
+      </Sequence>
     </Fallback>
   </BehaviorTree>
   <BehaviorTree ID="DockingAlignmentSubTree">
