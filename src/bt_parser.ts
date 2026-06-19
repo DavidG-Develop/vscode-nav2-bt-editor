@@ -956,26 +956,32 @@ function scanXml(xmlText: string): InternalXmlNode[] {
       );
       const closingTagName = extractClosingTagName(closingTagText);
 
-      if (closingTagName) {
-        for (let stackIndex = stack.length - 1; stackIndex >= 0; stackIndex -= 1) {
-          const candidate = stack[stackIndex];
-
-          if (candidate.tag !== closingTagName) {
-            continue;
-          }
-
-          candidate.closeTag = {
-            startOffset: openIndex,
-            endOffset: closeIndex + 1
-          };
-
-          stack.length = stackIndex;
-          break;
-        }
-      } else {
-        stack.pop();
+      if (!closingTagName) {
+        throw new Error(
+          `Malformed XML at line ${location.line + 1}, column ${location.column + 1}: closing tag is missing a tag name.`
+        );
       }
 
+      const openNode = stack[stack.length - 1];
+
+      if (!openNode) {
+        throw new Error(
+          `Malformed XML at line ${location.line + 1}, column ${location.column + 1}: closing tag </${closingTagName}> has no matching opening tag.`
+        );
+      }
+
+      if (openNode.tag !== closingTagName) {
+        throw new Error(
+          `Malformed XML at line ${location.line + 1}, column ${location.column + 1}: expected closing tag </${openNode.tag}> before </${closingTagName}>.`
+        );
+      }
+
+      openNode.closeTag = {
+        startOffset: openIndex,
+        endOffset: closeIndex + 1
+      };
+
+      stack.pop();
       index = closeIndex + 1;
       continue;
     }
