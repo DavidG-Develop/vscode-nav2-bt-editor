@@ -51,6 +51,15 @@ attachGlobalKeyboardHandlers();
 attachExtensionMessageHandlers();
 
 function initializeActiveRoot() {
+  if (selectedNodePath) {
+    const selectedRoot = findRootContainingPath(nodes, selectedNodePath);
+
+    if (selectedRoot) {
+      activeRootPath = selectedRoot.source?.path;
+      return;
+    }
+  }
+
   const preferredRoot = findPreferredTopRoot(nodes);
 
   if (preferredRoot) {
@@ -1239,7 +1248,7 @@ function renderDeleteSection(node) {
     return `
       <h3>Delete</h3>
       <div class="info-box">
-        This removes the SubTree reference. If the referenced BehaviorTree exists, it and nested referenced BehaviorTrees can be removed too.
+        This removes the SubTree reference. If the referenced BehaviorTree exists, it and nested referenced BehaviorTrees will be removed too.
       </div>
       <button id="delete-node-and-referenced-tree-button" class="attr-apply-button">
         ${
@@ -1291,7 +1300,7 @@ function renderAddBehaviorTreeSection(node) {
   return `
     <h3>Add referenced BehaviorTree</h3>
     <div class="info-box">
-      This will create a new top-level BehaviorTree with ID "${escapeHtml(targetId)}".
+      This will create an empty top-level BehaviorTree with ID "${escapeHtml(targetId)}". Open it and add the first child node inside it.
     </div>
     <input
       id="new-behavior-tree-id"
@@ -1599,6 +1608,12 @@ function attachAddBehaviorTreeHandlers(node) {
       return;
     }
 
+    const currentRoot = findNodeByPathInForest(nodes, activeRootPath);
+
+    if (currentRoot?.source?.path) {
+      rootNavigationStack.push(currentRoot.source.path);
+    }
+
     applyLocalImportedBehaviorTreeChainInsert(node, behaviorTreeId, true);
 
     vscode.postMessage({
@@ -1607,7 +1622,12 @@ function attachAddBehaviorTreeHandlers(node) {
       behaviorTreeId
     });
 
+    handleTreeStructureChange();
     renderTree();
+
+    requestAnimationFrame(() => {
+      applyPostTreeChangeView();
+    });
   });
 }
 
@@ -1708,6 +1728,7 @@ function attachAddChildHandlers(parentNode) {
 
     if (definition.ports.length === 0) {
       definitionPreview.innerHTML = `
+        ${renderSubtreeInsertPreview()}
         <div class="info-box">
           Known ${escapeHtml(getDefinitionDisplayCategory(definition))} node with no defined attributes.
         </div>
@@ -1717,7 +1738,7 @@ function attachAddChildHandlers(parentNode) {
     }
 
     definitionPreview.innerHTML = `
-      ${renderSelectedSubtreeTemplatePreview()}
+      ${renderSubtreeInsertPreview()}
       <h3>New child attributes</h3>
       <table class="attr-table">
         ${definition.ports.map((port) => renderChildPortRow(port)).join("")}
@@ -1727,20 +1748,22 @@ function attachAddChildHandlers(parentNode) {
     applySelectedSubtreeTemplateToIdInput();
   }
 
-  function renderSelectedSubtreeTemplatePreview() {
-    const behaviorTree = getSelectedImportedBehaviorTree();
-
-    if (!behaviorTree) {
+  function renderSubtreeInsertPreview() {
+    if (kindSelect.value !== "subtree" || !isSubTreeTagName(getSelectedTagName())) {
       return "";
     }
 
+    const behaviorTree = getSelectedImportedBehaviorTree();
+    const selectedTemplateText = behaviorTree
+      ? `Imported BehaviorTree "${escapeHtml(behaviorTree.id)}" selected. `
+      : "";
+    const insertModeText = includeFullBehaviorTree
+      ? "The referenced BehaviorTree XML will be inserted if it is not already in this XML."
+      : "Only the SubTree reference will be inserted. No BehaviorTree block will be created.";
+
     return `
       <div class="info-box">
-        Imported BehaviorTree "${escapeHtml(behaviorTree.id)}" selected. ${
-          includeFullBehaviorTree
-            ? "The full referenced BehaviorTree XML will be inserted if it is not already in this XML."
-            : "Only the SubTree reference will be inserted."
-        }
+        ${selectedTemplateText}${insertModeText}
       </div>
     `;
   }
@@ -2263,7 +2286,9 @@ function applyLocalBehaviorTreeInsert(
 
   const referenceRoot = findRootContainingPath(nodes, referenceNode.source?.path);
   const rootIndex = referenceRoot ? nodes.indexOf(referenceRoot) : nodes.length - 1;
-  const insertIndex = rootIndex >= 0 ? rootIndex + 1 : nodes.length;
+  const insertIndex = getBehaviorTreeWrapperPrefix()
+    ? nodes.length
+    : rootIndex >= 0 ? rootIndex + 1 : nodes.length;
 
   const newTree = templateTree
     ? cloneImportedBehaviorTreeNode(templateTree, behaviorTreeId, [insertIndex])

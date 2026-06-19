@@ -164,59 +164,20 @@ If inline SubTree expansion is enabled, double-clicking a SubTree expands or col
 
 ## Settings
 
-### `nav2BtEditor.autoSaveEdits`
+- `nav2BtEditor.autoSaveEdits`
+  Default: `true`. Automatically save the XML file after applying edits from the graph. When disabled, the editor buffer is updated but remains unsaved until you save it manually.
 
-Default:
+- `nav2BtEditor.allowEmptyAttributes`
+  Default: `false`. Allow empty XML attributes when applying edits. When disabled, empty attributes are removed from the XML.
 
-```json
-true
-```
+- `nav2BtEditor.openOnlyOneBehaviorTree`
+  Default: `true`. Show only one `BehaviorTree` at a time. When disabled, SubTree nodes can be expanded inline.
 
-Automatically save the XML file after applying edits from the graph.
+- `nav2BtEditor.autoFitOnTreeChange`
+  Default: `true`. Automatically fit the graph view after opening, closing, or navigating between BehaviorTrees.
 
-When disabled, the editor buffer is updated but the file remains unsaved until you save it manually.
-
-### `nav2BtEditor.allowEmptyAttributes`
-
-Default:
-
-```json
-false
-```
-
-Allow empty XML attributes when applying edits. When disabled, empty attributes are removed from the XML.
-
-### `nav2BtEditor.openOnlyOneBehaviorTree`
-
-Default:
-
-```json
-true
-```
-
-Show only one `BehaviorTree` at a time. When disabled, SubTree nodes can be expanded inline.
-
-### `nav2BtEditor.autoFitOnTreeChange`
-
-Default:
-
-```json
-true
-```
-
-Automatically fit the graph view after opening, closing, or navigating between BehaviorTrees.
-
-### `nav2BtEditor.includeFullBehaviorTree`
-
-Default:
-
-```json
-false
-```
-
-When enabled, adding an imported BehaviorTree as a `SubTree` also inserts the full referenced `BehaviorTree` XML into the current file.
-
-When disabled, only the `SubTree` reference is inserted. This is the default because it keeps the current file small and avoids silently duplicating imported tree definitions.
+- `nav2BtEditor.includeFullBehaviorTree`
+  Default: `false`. When enabled, adding an imported BehaviorTree as a `SubTree` also inserts the full referenced `BehaviorTree` XML into the current file. When disabled, only the `SubTree` reference is inserted.
 
 ## Commands
 

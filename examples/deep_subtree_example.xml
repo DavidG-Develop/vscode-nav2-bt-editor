@@ -36,25 +36,10 @@
                  door_id="{door_id}"
                  _autoremap="true"/>
         <NavigateThroughDoor door_id="{dsadsa}" goal="{meow}"/>
-        <AlignToDock name="align"/>
-        <CancelSpin name="stop"/>
+        <AlignToDock name="align"/><SubTree ID="ThisTreeDoesStuff" _autoremap="false"/>
         <CloseDoor door_id="{door_id}"/>
-      </Sequence>
+        </Sequence>
     </Fallback>
-  </BehaviorTree>
-  <BehaviorTree ID="DoorOpenRetrySubTree">
-    <RetryUntilSuccessful num_attempts="3" name="RetryDoorOpening">
-      <OpenDoor door_id="{door_id}" timeout="5.0"/>
-    </RetryUntilSuccessful>
-  </BehaviorTree>
-  <BehaviorTree ID="DockingSubTree">
-    <Sequence name="DockingSequence">
-      <ApproachDock docking_station="{docking_station}"/>
-      <SubTree ID="DockingAlignmentSubTree"
-               docking_station="{docking_station}"
-               _autoremap="true"/>
-      <DockRobot docking_station="{docking_station}"/>
-    </Sequence>
   </BehaviorTree>
   <BehaviorTree ID="DockingAlignmentSubTree">
     <Fallback name="DockingAlignmentFallback">
@@ -64,5 +49,14 @@
         <AlignToDock docking_station="{docking_station}"/>
       </Sequence>
     </Fallback>
+  </BehaviorTree>
+  <BehaviorTree ID="DoorOpenRetrySubTree">
+    <Fallback>
+      <AlignToDock/>
+      <ApproachDock/>
+    </Fallback>
+  </BehaviorTree>
+  <BehaviorTree ID="ThisTreeDoesStuff">
+    <Wait wait_duration="2.0"/>
   </BehaviorTree>
 </root>
