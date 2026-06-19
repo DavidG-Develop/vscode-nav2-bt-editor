@@ -111,6 +111,7 @@
   },
   "scripts": {
     "compile": "tsc -p ./",
+    "test": "tsc -p ./tsconfig.test.json && node --test out-test/test/bt_parser.test.js",
     "watch": "tsc -watch -p ./",
     "package": "vsce package"
   },
