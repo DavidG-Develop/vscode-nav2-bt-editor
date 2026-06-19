@@ -2,8 +2,15 @@
   <BehaviorTree ID="MainTree">
     <Fallback>
       <AlignToDock docking_station="1"/>
-      <BackUp backup_dist="33"/>
       <AlwaysSuccess/>
+      <SubTree ID="subtree1" _autoremap="true"/>
+      <BackUp backup_dist="33"/>
     </Fallback>
+  </BehaviorTree>
+  <BehaviorTree ID="subtree1">
+    <Parallel>
+      <BackUp/>
+      <AssistedTeleop/>
+    </Parallel>
   </BehaviorTree>
 </root>
