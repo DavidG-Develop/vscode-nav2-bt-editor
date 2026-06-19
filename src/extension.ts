@@ -478,24 +478,24 @@ export function activate(context: vscode.ExtensionContext): void {
         return;
       }
 
-      const normalizedUrl = normalizeGitHubBlobUrlToRaw(url);
-      const response = await fetch(normalizedUrl);
+      const download = await downloadXmlFromUrl(url, "TreeNodesModel");
 
-      if (!response.ok) {
-        vscode.window.showErrorMessage(
-          `Failed to download TreeNodesModel XML: HTTP ${response.status}`
-        );
+      if (!download) {
         return;
       }
 
-      const xmlText = await response.text();
-
-      await importTreeNodeDefinitionsFromText(
-        context,
-        xmlText,
-        normalizedUrl,
-        editorRefreshers
-      );
+      try {
+        await importTreeNodeDefinitionsFromText(
+          context,
+          download.xmlText,
+          download.normalizedUrl,
+          editorRefreshers
+        );
+      } catch (error) {
+        vscode.window.showErrorMessage(
+          `Failed to import TreeNodesModel XML from URL: ${formatErrorMessage(error)}`
+        );
+      }
     }
   );
 
@@ -546,24 +546,24 @@ export function activate(context: vscode.ExtensionContext): void {
         return;
       }
 
-      const normalizedUrl = normalizeGitHubBlobUrlToRaw(url);
-      const response = await fetch(normalizedUrl);
+      const download = await downloadXmlFromUrl(url, "BehaviorTree");
 
-      if (!response.ok) {
-        vscode.window.showErrorMessage(
-          `Failed to download BehaviorTree XML: HTTP ${response.status}`
-        );
+      if (!download) {
         return;
       }
 
-      const xmlText = await response.text();
-
-      await importBehaviorTreesFromText(
-        context,
-        xmlText,
-        normalizedUrl,
-        editorRefreshers
-      );
+      try {
+        await importBehaviorTreesFromText(
+          context,
+          download.xmlText,
+          download.normalizedUrl,
+          editorRefreshers
+        );
+      } catch (error) {
+        vscode.window.showErrorMessage(
+          `Failed to import BehaviorTree XML from URL: ${formatErrorMessage(error)}`
+        );
+      }
     }
   );
 
@@ -964,6 +964,46 @@ function isBehaviorTreeTemplate(value: unknown): value is BehaviorTreeTemplate {
     typeof maybe.xmlText === "string" &&
     typeof maybe.source === "string"
   );
+}
+
+async function downloadXmlFromUrl(
+  url: string,
+  label: string
+): Promise<{ normalizedUrl: string; xmlText: string } | undefined> {
+  const normalizedUrl = normalizeGitHubBlobUrlToRaw(url);
+  let response: Response;
+
+  try {
+    response = await fetch(normalizedUrl);
+  } catch (error) {
+    vscode.window.showErrorMessage(
+      `Failed to download ${label} XML: ${formatErrorMessage(error)}`
+    );
+    return undefined;
+  }
+
+  if (!response.ok) {
+    vscode.window.showErrorMessage(
+      `Failed to download ${label} XML: HTTP ${response.status}`
+    );
+    return undefined;
+  }
+
+  try {
+    return {
+      normalizedUrl,
+      xmlText: await response.text()
+    };
+  } catch (error) {
+    vscode.window.showErrorMessage(
+      `Failed to read ${label} XML response: ${formatErrorMessage(error)}`
+    );
+    return undefined;
+  }
+}
+
+function formatErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function normalizeGitHubBlobUrlToRaw(url: string): string {
