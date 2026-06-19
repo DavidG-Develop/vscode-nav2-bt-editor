@@ -25,20 +25,16 @@
   </BehaviorTree>
   <BehaviorTree ID="DoorTraversalSubTree">
     <Fallback name="DoorTraversalFallback">
+      <Sequence name="OpenAndTraverseDoorSequence">
+        <AlignToDock name="align" docking_station="1"/>
+        <NavigateThroughDoor door_id="{dsadsa}"/>
+        <ApproachDock/>
+      </Sequence>
       <Sequence name="DoorAlreadyOpenSequence">
         <Inverter>
           <IsDoorClosed door_id="{door_id}"/>
         </Inverter>
         <NavigateThroughDoor door_id="{door_id}" goal="{goal}"/>
-      </Sequence>
-      <Sequence name="OpenAndTraverseDoorSequence">
-        <SubTree ID="DoorOpenRetrySubTree"
-                 door_id="{door_id}"
-                 _autoremap="true"/>
-        <NavigateThroughDoor door_id="{dsadsa}" goal="{meow}"/>
-        <AlignToDock name="align"/>
-        <CloseDoor door_id="{door_id}"/>
-        <SubTree ID="ThisTreeDoesStuff" _autoremap="false"/>
       </Sequence>
     </Fallback>
   </BehaviorTree>
@@ -50,14 +46,5 @@
         <AlignToDock docking_station="{docking_station}"/>
       </Sequence>
     </Fallback>
-  </BehaviorTree>
-  <BehaviorTree ID="DoorOpenRetrySubTree">
-    <Fallback>
-      <AlignToDock/>
-      <ApproachDock/>
-    </Fallback>
-  </BehaviorTree>
-  <BehaviorTree ID="ThisTreeDoesStuff">
-    <Wait wait_duration="2.0"/>
   </BehaviorTree>
 </root>

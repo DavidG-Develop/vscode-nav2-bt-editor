@@ -94,6 +94,7 @@ export function activate(context: vscode.ExtensionContext): void {
       let selectedPath: number[] | undefined;
       let refreshTimer: ReturnType<typeof setTimeout> | undefined;
       let suppressDocumentRefreshUntil = 0;
+      let suppressXmlSelectionSyncUntil = 0;
 
       const panel = vscode.window.createWebviewPanel(
         "nav2BtEditor",
@@ -108,6 +109,15 @@ export function activate(context: vscode.ExtensionContext): void {
         }
       );
 
+      const xmlSelectionDecoration =
+        vscode.window.createTextEditorDecorationType({
+          isWholeLine: true,
+          backgroundColor: "rgba(255, 152, 0, 0.16)",
+          border: "1px solid rgba(255, 152, 0, 0.65)",
+          overviewRulerColor: "rgba(255, 152, 0, 0.9)",
+          overviewRulerLane: vscode.OverviewRulerLane.Right
+        });
+
       function updateEditor(): void {
         try {
           const xmlText = targetDocument.getText();
@@ -118,6 +128,8 @@ export function activate(context: vscode.ExtensionContext): void {
             xmlText,
             importedDefinitions
           );
+
+          updateXmlSelectionDecoration();
 
           panel.webview.html = getWebviewHtml(
             panel.webview,
@@ -156,8 +168,56 @@ export function activate(context: vscode.ExtensionContext): void {
         );
       }
 
+      function suppressEditorSideEffects(milliseconds: number): void {
+        suppressDocumentRefresh(milliseconds);
+        suppressXmlSelectionSync(milliseconds);
+      }
+
       function isDocumentRefreshSuppressed(): boolean {
         return Date.now() < suppressDocumentRefreshUntil;
+      }
+
+      function suppressXmlSelectionSync(milliseconds: number): void {
+        suppressXmlSelectionSyncUntil = Math.max(
+          suppressXmlSelectionSyncUntil,
+          Date.now() + milliseconds
+        );
+      }
+
+      function isXmlSelectionSyncSuppressed(): boolean {
+        return Date.now() < suppressXmlSelectionSyncUntil;
+      }
+
+      function updateXmlSelectionDecoration(): void {
+        const ranges = getSelectedXmlRanges(
+          targetDocument,
+          context,
+          selectedPath
+        );
+
+        for (const editor of vscode.window.visibleTextEditors) {
+          if (editor.document.uri.toString() !== targetDocument.uri.toString()) {
+            continue;
+          }
+
+          editor.setDecorations(xmlSelectionDecoration, ranges);
+        }
+      }
+
+      function clearXmlSelectionDecoration(): void {
+        for (const editor of vscode.window.visibleTextEditors) {
+          editor.setDecorations(xmlSelectionDecoration, []);
+        }
+      }
+
+      function selectPathFromXml(path: number[]): void {
+        selectedPath = path;
+        updateXmlSelectionDecoration();
+
+        void panel.webview.postMessage({
+          type: "xmlNodeSelected",
+          path
+        });
       }
 
       function syncWebviewFromDocument(refit = false): void {
@@ -172,6 +232,8 @@ export function activate(context: vscode.ExtensionContext): void {
             selectedPath: selectedPath ?? null,
             refit
           });
+
+          updateXmlSelectionDecoration();
         } catch (error) {
           const message =
             error instanceof Error ? error.message : String(error);
@@ -186,6 +248,7 @@ export function activate(context: vscode.ExtensionContext): void {
         async (message: WebviewMessage) => {
           if (message.type === "selectNode") {
             selectedPath = message.path;
+            updateXmlSelectionDecoration();
             return;
           }
 
@@ -197,12 +260,13 @@ export function activate(context: vscode.ExtensionContext): void {
           if (message.type === "updateAttribute") {
             selectedPath = message.path;
 
-            suppressDocumentRefresh(2500);
+            suppressEditorSideEffects(2500);
 
             const updated = await updateAttribute(targetDocument, message);
 
             if (!updated) {
               suppressDocumentRefreshUntil = 0;
+              suppressXmlSelectionSyncUntil = 0;
               syncWebviewFromDocument();
               return;
             }
@@ -210,11 +274,11 @@ export function activate(context: vscode.ExtensionContext): void {
             const autoSaveEdits = getAutoSaveEditsSetting(targetDocument.uri);
 
             if (autoSaveEdits) {
-              suppressDocumentRefresh(2500);
+              suppressEditorSideEffects(2500);
 
               const saved = await targetDocument.save();
 
-              suppressDocumentRefresh(2500);
+              suppressEditorSideEffects(2500);
 
               if (!saved) {
                 vscode.window.showWarningMessage(
@@ -223,16 +287,19 @@ export function activate(context: vscode.ExtensionContext): void {
               }
             }
 
+            updateXmlSelectionDecoration();
+
             return;
           }
 
           if (message.type === "addChildNode") {
-            suppressDocumentRefresh(2500);
+            suppressEditorSideEffects(2500);
 
             const result = await addChildNode(context, targetDocument, message);
 
             if (!result) {
               suppressDocumentRefreshUntil = 0;
+              suppressXmlSelectionSyncUntil = 0;
               syncWebviewFromDocument();
               return;
             }
@@ -242,11 +309,11 @@ export function activate(context: vscode.ExtensionContext): void {
             const autoSaveEdits = getAutoSaveEditsSetting(targetDocument.uri);
 
             if (autoSaveEdits) {
-              suppressDocumentRefresh(2500);
+              suppressEditorSideEffects(2500);
 
               const saved = await targetDocument.save();
 
-              suppressDocumentRefresh(2500);
+              suppressEditorSideEffects(2500);
 
               if (!saved) {
                 vscode.window.showWarningMessage(
@@ -261,7 +328,7 @@ export function activate(context: vscode.ExtensionContext): void {
           }
 
           if (message.type === "addBehaviorTree") {
-            suppressDocumentRefresh(2500);
+            suppressEditorSideEffects(2500);
 
             const result = await addBehaviorTree(
               context,
@@ -271,6 +338,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
             if (!result) {
               suppressDocumentRefreshUntil = 0;
+              suppressXmlSelectionSyncUntil = 0;
               syncWebviewFromDocument();
               return;
             }
@@ -280,11 +348,11 @@ export function activate(context: vscode.ExtensionContext): void {
             const autoSaveEdits = getAutoSaveEditsSetting(targetDocument.uri);
 
             if (autoSaveEdits) {
-              suppressDocumentRefresh(2500);
+              suppressEditorSideEffects(2500);
 
               const saved = await targetDocument.save();
 
-              suppressDocumentRefresh(2500);
+              suppressEditorSideEffects(2500);
 
               if (!saved) {
                 vscode.window.showWarningMessage(
@@ -299,12 +367,13 @@ export function activate(context: vscode.ExtensionContext): void {
           }
 
           if (message.type === "deleteNode") {
-            suppressDocumentRefresh(2500);
+            suppressEditorSideEffects(2500);
 
             const result = await deleteNode(targetDocument, message);
 
             if (!result) {
               suppressDocumentRefreshUntil = 0;
+              suppressXmlSelectionSyncUntil = 0;
               syncWebviewFromDocument();
               return;
             }
@@ -314,11 +383,11 @@ export function activate(context: vscode.ExtensionContext): void {
             const autoSaveEdits = getAutoSaveEditsSetting(targetDocument.uri);
 
             if (autoSaveEdits) {
-              suppressDocumentRefresh(2500);
+              suppressEditorSideEffects(2500);
 
               const saved = await targetDocument.save();
 
-              suppressDocumentRefresh(2500);
+              suppressEditorSideEffects(2500);
 
               if (!saved) {
                 vscode.window.showWarningMessage(
@@ -333,12 +402,13 @@ export function activate(context: vscode.ExtensionContext): void {
           }
 
           if (message.type === "moveNode") {
-            suppressDocumentRefresh(2500);
+            suppressEditorSideEffects(2500);
 
             const result = await moveNode(targetDocument, message);
 
             if (!result) {
               suppressDocumentRefreshUntil = 0;
+              suppressXmlSelectionSyncUntil = 0;
               syncWebviewFromDocument();
               return;
             }
@@ -348,11 +418,11 @@ export function activate(context: vscode.ExtensionContext): void {
             const autoSaveEdits = getAutoSaveEditsSetting(targetDocument.uri);
 
             if (autoSaveEdits) {
-              suppressDocumentRefresh(2500);
+              suppressEditorSideEffects(2500);
 
               const saved = await targetDocument.save();
 
-              suppressDocumentRefresh(2500);
+              suppressEditorSideEffects(2500);
 
               if (!saved) {
                 vscode.window.showWarningMessage(
@@ -366,6 +436,7 @@ export function activate(context: vscode.ExtensionContext): void {
               context,
               targetDocument
             );
+            updateXmlSelectionDecoration();
 
             return;
           }
@@ -383,10 +454,42 @@ export function activate(context: vscode.ExtensionContext): void {
           }
 
           if (isDocumentRefreshSuppressed()) {
+            updateXmlSelectionDecoration();
             return;
           }
 
           scheduleUpdateEditor();
+          updateXmlSelectionDecoration();
+        }
+      );
+
+      const selectionSubscription = vscode.window.onDidChangeTextEditorSelection(
+        (event) => {
+          if (event.textEditor.document.uri.toString() !== targetDocument.uri.toString()) {
+            return;
+          }
+
+          if (isXmlSelectionSyncSuppressed()) {
+            return;
+          }
+
+          const node = findParsedNodeAtPosition(
+            targetDocument,
+            context,
+            event.textEditor.selection.active
+          );
+
+          if (!node || (selectedPath && pathsEqual(node.source.path, selectedPath))) {
+            return;
+          }
+
+          selectPathFromXml(node.source.path);
+        }
+      );
+
+      const visibleEditorsSubscription = vscode.window.onDidChangeVisibleTextEditors(
+        () => {
+          updateXmlSelectionDecoration();
         }
       );
 
@@ -425,7 +528,11 @@ export function activate(context: vscode.ExtensionContext): void {
         }
 
         editorRefreshers.delete(scheduleUpdateEditor);
+        clearXmlSelectionDecoration();
+        xmlSelectionDecoration.dispose();
         changeSubscription.dispose();
+        selectionSubscription.dispose();
+        visibleEditorsSubscription.dispose();
         configSubscription.dispose();
       });
     }
@@ -1097,6 +1204,160 @@ function postParsedSourceMetadataUpdate(
   } catch {
     // The next successful parse will refresh source metadata.
   }
+}
+
+function getSelectedXmlRanges(
+  document: vscode.TextDocument,
+  context: vscode.ExtensionContext,
+  selectedPath: number[] | undefined
+): vscode.Range[] {
+  if (!selectedPath) {
+    return [];
+  }
+
+  try {
+    const parsedNodes = parseBehaviorTreeXml(
+      document.getText(),
+      getImportedTreeNodeDefinitions(context)
+    );
+    const selectedNode = findParsedNodeByPath(parsedNodes, selectedPath);
+
+    if (!selectedNode) {
+      return [];
+    }
+
+    return [getNodeStartTagRange(document, selectedNode)];
+  } catch {
+    return [];
+  }
+}
+
+function findParsedNodeAtPosition(
+  document: vscode.TextDocument,
+  context: vscode.ExtensionContext,
+  position: vscode.Position
+): BtNode | undefined {
+  try {
+    const parsedNodes = parseBehaviorTreeXml(
+      document.getText(),
+      getImportedTreeNodeDefinitions(context)
+    );
+    const offset = document.offsetAt(position);
+
+    return findParsedNodeAtOffset(parsedNodes, offset) ??
+      findParsedNodeOnLine(parsedNodes, position.line);
+  } catch {
+    return undefined;
+  }
+}
+
+function findParsedNodeAtOffset(
+  nodes: BtNode[],
+  offset: number
+): BtNode | undefined {
+  let bestMatch: BtNode | undefined;
+
+  for (const node of nodes) {
+    const match = findParsedNodeAtOffsetRecursive(node, offset);
+
+    if (
+      match &&
+      (!bestMatch || match.source.path.length > bestMatch.source.path.length)
+    ) {
+      bestMatch = match;
+    }
+  }
+
+  return bestMatch;
+}
+
+function findParsedNodeAtOffsetRecursive(
+  node: BtNode,
+  offset: number
+): BtNode | undefined {
+  let bestMatch: BtNode | undefined;
+
+  if (
+    offset >= node.source.startOffset &&
+    offset <= node.source.endOpenTagOffset
+  ) {
+    bestMatch = node;
+  }
+
+  for (const child of node.children) {
+    const match = findParsedNodeAtOffsetRecursive(child, offset);
+
+    if (
+      match &&
+      (!bestMatch || match.source.path.length > bestMatch.source.path.length)
+    ) {
+      bestMatch = match;
+    }
+  }
+
+  return bestMatch;
+}
+
+function findParsedNodeOnLine(
+  nodes: BtNode[],
+  line: number
+): BtNode | undefined {
+  let bestMatch: BtNode | undefined;
+
+  for (const node of nodes) {
+    const match = findParsedNodeOnLineRecursive(node, line);
+
+    if (
+      match &&
+      (!bestMatch || match.source.path.length > bestMatch.source.path.length)
+    ) {
+      bestMatch = match;
+    }
+  }
+
+  return bestMatch;
+}
+
+function findParsedNodeOnLineRecursive(
+  node: BtNode,
+  line: number
+): BtNode | undefined {
+  let bestMatch: BtNode | undefined;
+  const startLine = node.source.line;
+  const endLine = startLine + countLineBreaks(node.source.startTag);
+
+  if (line >= startLine && line <= endLine) {
+    bestMatch = node;
+  }
+
+  for (const child of node.children) {
+    const match = findParsedNodeOnLineRecursive(child, line);
+
+    if (
+      match &&
+      (!bestMatch || match.source.path.length > bestMatch.source.path.length)
+    ) {
+      bestMatch = match;
+    }
+  }
+
+  return bestMatch;
+}
+
+function getNodeStartTagRange(
+  document: vscode.TextDocument,
+  node: BtNode
+): vscode.Range {
+  const start = document.positionAt(node.source.startOffset);
+  const end = document.positionAt(
+    Math.max(node.source.startOffset, node.source.endOpenTagOffset - 1)
+  );
+
+  return new vscode.Range(start, end);
+}
+
+function countLineBreaks(value: string): number {
+  return (value.match(/\n/g) ?? []).length;
 }
 
 async function revealNode(

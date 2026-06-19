@@ -114,6 +114,43 @@ function attachExtensionMessageHandlers() {
         message.selectedPath,
         Boolean(message.refit)
       );
+      return;
+    }
+
+    if (message?.type === "xmlNodeSelected") {
+      applyXmlNodeSelection(message.path);
+    }
+  });
+}
+
+function applyXmlNodeSelection(path) {
+  if (!Array.isArray(path)) {
+    return;
+  }
+
+  const node = findNodeByPathInForest(nodes, path);
+
+  if (!node) {
+    return;
+  }
+
+  selectedNodePath = path;
+  selectedNodeId = undefined;
+
+  const selectedRoot = findRootContainingPath(nodes, selectedNodePath);
+
+  if (selectedRoot) {
+    activeRootPath = selectedRoot.source?.path;
+  }
+
+  renderDetails(node);
+  renderTree();
+
+  requestAnimationFrame(() => {
+    const selectedNode = findNodeByPathInForest(currentLayoutRoots, selectedNodePath);
+
+    if (selectedNode) {
+      centerOnNode(selectedNode);
     }
   });
 }
@@ -1173,7 +1210,12 @@ function renderDetails(node) {
               ${escapeHtml(formatSourceLocation(source))}
             </p>
             <pre class="xml-preview">${escapeHtml(source.startTag)}</pre>
-            <button id="reveal-node-button">Reveal in XML</button>
+            <button
+              id="reveal-node-button"
+              title="Move keyboard focus and cursor to this XML line"
+            >
+              Send cursor to XML line
+            </button>
           `
           : `
             <p class="source-location">
