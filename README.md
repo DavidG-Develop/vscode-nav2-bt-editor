@@ -24,9 +24,7 @@ You can also right-click an XML file in the Explorer and select the same command
 
 ## Demo
 
-<!-- Add the recorded demo GIF at docs/nav2-bt-editor-demo.gif before publishing. Suggested capture: open a Nav2 BT XML file, move a child node before another child, edit an attribute, and add an imported SubTree. -->
-
-![Nav2 BT Editor demo: moving nodes, editing attributes, and adding a SubTree](docs/nav2-bt-editor-demo.gif)
+![Nav2 BT Editor demo](docs/nav_bt_editor.gif)
 
 ## What it does
 
