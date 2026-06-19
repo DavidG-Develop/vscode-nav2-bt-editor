@@ -4,6 +4,14 @@
   "description": "Visual editor for ROS 2 Nav2 and BehaviorTree.CPP XML behavior trees.",
   "version": "0.6.2",
   "publisher": "DavidG-Develop",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/DavidG-Develop/vscode-nav2-bt-editor.git"
+  },
+  "homepage": "https://github.com/DavidG-Develop/vscode-nav2-bt-editor#readme",
+  "bugs": {
+    "url": "https://github.com/DavidG-Develop/vscode-nav2-bt-editor/issues"
+  },
   "engines": {
     "vscode": "^1.90.0"
   },
