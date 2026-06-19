@@ -118,8 +118,12 @@
     }
   },
   "scripts": {
-    "compile": "tsc -p ./",
-    "test": "tsc -p ./tsconfig.test.json && node --test out-test/test/bt_parser.test.js",
+    "clean": "node -e \"const fs=require('fs'); for (const p of ['out','out-test']) fs.rmSync(p,{recursive:true,force:true});\"",
+    "clean:out": "node -e \"require('fs').rmSync('out',{recursive:true,force:true});\"",
+    "clean:test": "node -e \"require('fs').rmSync('out-test',{recursive:true,force:true});\"",
+    "compile": "npm run clean:out && tsc -p ./",
+    "test": "npm run clean:test && tsc -p ./tsconfig.test.json && node --test out-test/test/bt_parser.test.js",
+    "vscode:prepublish": "npm run compile",
     "watch": "tsc -watch -p ./",
     "package": "vsce package"
   },
