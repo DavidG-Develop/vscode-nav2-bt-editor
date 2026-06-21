@@ -69,6 +69,11 @@ export type MoveXmlNodeResult = {
   movedPath: number[];
 };
 
+export type CopyXmlNodeResult = {
+  xmlText: string;
+  copiedPath: number[];
+};
+
 type InternalXmlNode = Omit<
   BtNode,
   "kind" | "children" | "definitionKnown" | "definition"
@@ -210,6 +215,21 @@ export function parseBehaviorTreeTemplatesFromXml(
   }
 
   return Object.fromEntries(templates.entries());
+}
+
+export function hasSubTreeReferenceToBehaviorTree(
+  xmlText: string,
+  behaviorTreeId: string
+): boolean {
+  const roots = scanXml(xmlText);
+
+  for (const root of roots) {
+    if (hasSubTreeReferenceToBehaviorTreeRecursive(root, behaviorTreeId)) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 export function updateXmlAttributeByPath(
@@ -518,6 +538,104 @@ export function moveXmlNodeByPath(
   };
 }
 
+export function insertXmlNodeCopyByPath(
+  xmlText: string,
+  sourcePath: number[],
+  parentPath: number[]
+): CopyXmlNodeResult {
+  const roots = scanXml(xmlText);
+  const source = findNodeByPath(roots, sourcePath);
+  const parent = findNodeByPath(roots, parentPath);
+
+  if (!source) {
+    throw new Error(
+      `Could not find source XML node at path [${sourcePath.join(", ")}].`
+    );
+  }
+
+  if (!parent) {
+    throw new Error(
+      `Could not find target XML parent node at path [${parentPath.join(", ")}].`
+    );
+  }
+
+  const parentIndent = getLineIndentAtOffset(xmlText, parent.source.startOffset);
+  const childIndent = `${parentIndent}  `;
+  const sourceXml = getNodeXml(xmlText, source);
+  const copiedXml = prefixCopiedNameAttribute(sourceXml, source);
+  const formattedCopy = formatNodeXmlForInsert(copiedXml, childIndent);
+  const copiedPath = [...parent.source.path, parent.children.length];
+  const parentOpenTag = xmlText.slice(
+    parent.source.startOffset,
+    parent.source.endOpenTagOffset
+  );
+
+  if (isSelfClosingOpenTag(parentOpenTag)) {
+    const expandedParentOpenTag = parentOpenTag.replace(/\/\s*>$/, ">");
+    const replacement = [
+      expandedParentOpenTag,
+      `\n${formattedCopy}`,
+      `\n${parentIndent}</${parent.tag}>`
+    ].join("");
+
+    return {
+      xmlText: removeBlankXmlLines(
+        xmlText.slice(0, parent.source.startOffset) +
+        replacement +
+        xmlText.slice(parent.source.endOpenTagOffset)
+      ),
+      copiedPath
+    };
+  }
+
+  if (!parent.closeTag) {
+    throw new Error(`Could not find closing tag for <${parent.tag}>.`);
+  }
+
+  const insertion = `\n${formattedCopy}\n${parentIndent}`;
+
+  return {
+    xmlText: removeBlankXmlLines(
+      xmlText.slice(0, parent.closeTag.startOffset) +
+      insertion +
+      xmlText.slice(parent.closeTag.startOffset)
+    ),
+    copiedPath
+  };
+}
+
+function getNodeXml(xmlText: string, node: InternalXmlNode): string {
+  const end = node.closeTag?.endOffset ?? node.source.endOpenTagOffset;
+  return xmlText.slice(node.source.startOffset, end);
+}
+
+function prefixCopiedNameAttribute(
+  nodeXml: string,
+  node: InternalXmlNode
+): string {
+  const name = node.attributes["name"];
+
+  if (!name) {
+    return nodeXml;
+  }
+
+  const openTagEnd = node.source.endOpenTagOffset - node.source.startOffset;
+  const openTag = nodeXml.slice(0, openTagEnd);
+  const prefixedOpenTag = setAttributeInOpenTag(openTag, "name", `${name}_copy`);
+
+  return prefixedOpenTag + nodeXml.slice(openTagEnd);
+}
+
+function formatNodeXmlForInsert(nodeXml: string, indent: string): string {
+  const normalizedXml = removeBlankXmlLines(nodeXml.trim());
+  const lines = normalizedXml.split(/\r?\n/);
+  const commonIndent = getCommonLineIndent(lines);
+
+  return lines
+    .map((line) => `${indent}${line.slice(commonIndent.length)}`)
+    .join("\n");
+}
+
 function clampIndex(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
 }
@@ -640,6 +758,26 @@ function findBehaviorTreeByIdRecursive(
   }
 
   return undefined;
+}
+
+function hasSubTreeReferenceToBehaviorTreeRecursive(
+  node: InternalXmlNode,
+  behaviorTreeId: string
+): boolean {
+  if (
+    (node.tag === "SubTree" || node.tag === "SubTreePlus") &&
+    node.attributes["ID"] === behaviorTreeId
+  ) {
+    return true;
+  }
+
+  for (const child of node.children) {
+    if (hasSubTreeReferenceToBehaviorTreeRecursive(child, behaviorTreeId)) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 function parseSingleBehaviorTreeTemplate(

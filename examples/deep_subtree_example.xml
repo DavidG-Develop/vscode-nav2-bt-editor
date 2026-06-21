@@ -3,11 +3,13 @@
     <Sequence name="MainMission">
       <InitializeMission mission_id="{mission_id}"/>
       <SubTree ID="NavigateMissionSubTree"
-               goal="{goal}"
-               target_door="{target_door}"
-               docking_station="{docking_station}"
-               _autoremap="true"/>
-      <FinalizeMission mission_id="{mission_id}"/></Sequence>
+                                 goal="{goal}"
+                                 target_door="{target_door}"
+                                 docking_station="{docking_station}"
+                                 _autoremap="true"/>
+      <FinalizeMission mission_id="{mission_id}" name="finalize"/>
+      <NavigateThroughDoor door_id="{door_id}" goal="{goal}"/>
+    </Sequence>
   </BehaviorTree>
   <BehaviorTree ID="NavigateMissionSubTree">
     <Sequence name="NavigateMission">

@@ -16,6 +16,7 @@ const includeFullBehaviorTree =
 let selectedNodePath = window.initialSelectedPath ?? undefined;
 let selectedNodeId = undefined;
 let localNodeCounter = 0;
+let copiedNode = undefined;
 
 let activeRootPath = undefined;
 let rootNavigationStack = [];
@@ -74,10 +75,6 @@ function initializeActiveRoot() {
 
 function attachGlobalKeyboardHandlers() {
   document.addEventListener("keydown", (event) => {
-    if (event.key !== "Delete" && event.key !== "Backspace") {
-      return;
-    }
-
     if (isTextEditingElement(document.activeElement)) {
       return;
     }
@@ -85,6 +82,29 @@ function attachGlobalKeyboardHandlers() {
     const selectedNode = findNodeByPathInForest(nodes, selectedNodePath);
 
     if (!selectedNode) {
+      return;
+    }
+
+    const key = event.key.toLowerCase();
+    const modifierPressed = event.ctrlKey || event.metaKey;
+
+    if (modifierPressed && key === "c") {
+      if (copySelectedNode(selectedNode)) {
+        event.preventDefault();
+      }
+
+      return;
+    }
+
+    if (modifierPressed && key === "v") {
+      if (pasteCopiedNodeInto(selectedNode)) {
+        event.preventDefault();
+      }
+
+      return;
+    }
+
+    if (event.key !== "Delete" && event.key !== "Backspace") {
       return;
     }
 
@@ -1227,6 +1247,7 @@ function renderDetails(node) {
     </div>
 
     ${renderAttributeSections(node, definition, extraAttributes)}
+    ${renderCopyPasteSection(node, childLimit)}
     ${renderDeleteSection(node)}
     ${renderAddBehaviorTreeSection(node)}
     ${renderAddChildSection(node, childLimit)}
@@ -1245,6 +1266,7 @@ function renderDetails(node) {
   }
 
   attachAttributeHandlers(node);
+  attachCopyPasteHandlers(node);
   attachDeleteHandlers(node);
   attachAddBehaviorTreeHandlers(node);
   attachAddChildHandlers(node);
@@ -1319,6 +1341,47 @@ function renderAttributeSections(node, definition, extraAttributes) {
   return sections.join("");
 }
 
+function renderCopyPasteSection(node, childLimit) {
+  const canCopy = canCopyNode(node);
+  const canPaste = Boolean(copiedNode) && childLimit.canAdd;
+  const copiedLabel = copiedNode
+    ? `${copiedNode.tag}${copiedNode.name ? `: ${copiedNode.name}` : ""}`
+    : "No node copied.";
+  const pasteHint = copiedNode
+    ? childLimit.canAdd
+      ? `Paste copied ${copiedNode.tag} as the last child of this node.`
+      : childLimit.reason
+    : "Copy a node first, then select a parent that can accept another child.";
+
+  return `
+    <h3>Copy / paste</h3>
+    <div class="info-box">
+      Copied: ${escapeHtml(copiedLabel)}
+    </div>
+    ${
+      canCopy
+        ? `
+          <button id="copy-node-button" class="attr-apply-button">
+            Copy selected node
+          </button>
+        `
+        : `
+          <div class="info-box">
+            ${escapeHtml(getCopyUnavailableReason(node))}
+          </div>
+        `
+    }
+    <button
+      id="paste-node-button"
+      class="attr-apply-button"
+      ${canPaste ? "" : "disabled"}
+      title="${escapeHtml(pasteHint)}"
+    >
+      Paste as child
+    </button>
+  `;
+}
+
 function renderDeleteSection(node) {
   const targetId = isSubTreeNode(node) ? node.attributes?.ID : undefined;
   const targetExists = targetId ? Boolean(findBehaviorTreeById(nodes, targetId)) : false;
@@ -1327,12 +1390,12 @@ function renderDeleteSection(node) {
     return `
       <h3>Delete</h3>
       <div class="info-box">
-        This removes the SubTree reference. If the referenced BehaviorTree exists, it and nested referenced BehaviorTrees will be removed too.
+        This removes the SubTree reference. Referenced BehaviorTrees will be removed only when no remaining SubTree call uses them.
       </div>
       <button id="delete-node-and-referenced-tree-button" class="attr-apply-button">
         ${
           targetExists
-            ? "Delete SubTree and referenced BehaviorTrees"
+            ? "Delete SubTree and unused referenced BehaviorTrees"
             : "Delete SubTree reference"
         }
       </button>
@@ -1620,6 +1683,23 @@ function attachAttributeHandlers(node) {
   }
 }
 
+function attachCopyPasteHandlers(node) {
+  const copyButton = document.getElementById("copy-node-button");
+  const pasteButton = document.getElementById("paste-node-button");
+
+  if (copyButton) {
+    copyButton.addEventListener("click", () => {
+      copySelectedNode(node);
+    });
+  }
+
+  if (pasteButton) {
+    pasteButton.addEventListener("click", () => {
+      pasteCopiedNodeInto(node);
+    });
+  }
+}
+
 function attachDeleteHandlers(node) {
   const deleteButton = document.getElementById("delete-node-button");
   const deleteWithTreeButton = document.getElementById(
@@ -1664,6 +1744,66 @@ function requestDeleteNode(node, deleteReferencedBehaviorTree) {
   );
 
   renderTree();
+}
+
+function copySelectedNode(node) {
+  if (!canCopyNode(node)) {
+    return false;
+  }
+
+  const sourceNode = findNodeByPathInForest(nodes, node.source?.path) ?? node;
+
+  copiedNode = cloneNodeForClipboard(sourceNode);
+  renderDetails(node);
+  return true;
+}
+
+function pasteCopiedNodeInto(parentNode) {
+  if (!copiedNode) {
+    return false;
+  }
+
+  const childLimit = getChildLimitInfo(parentNode);
+
+  if (!childLimit.canAdd) {
+    renderDetails(parentNode);
+    return false;
+  }
+
+  const newChild = applyLocalCopiedNodePaste(parentNode, copiedNode);
+
+  if (!newChild) {
+    return false;
+  }
+
+  vscode.postMessage({
+    type: "pasteNode",
+    sourcePath: copiedNode.source.path,
+    parentPath: parentNode.source.path
+  });
+
+  selectedNodePath = newChild.source.path;
+  selectedNodeId = newChild.id;
+
+  renderDetails(newChild);
+  renderTree();
+  return true;
+}
+
+function canCopyNode(node) {
+  return (
+    node?.tag !== "BehaviorTree" &&
+    Array.isArray(node?.source?.path) &&
+    node.source.startOffset >= 0
+  );
+}
+
+function getCopyUnavailableReason(node) {
+  if (node?.tag === "BehaviorTree") {
+    return "BehaviorTree root nodes are not copied as child nodes. Select the tree root child instead.";
+  }
+
+  return "This node has not been reparsed yet. Wait for the XML refresh before copying it.";
 }
 
 function attachAddBehaviorTreeHandlers(node) {
@@ -2080,6 +2220,42 @@ function applyLocalChildNodeInsert(parentNode, tagName, attributes, definition) 
   return newChild;
 }
 
+function applyLocalCopiedNodePaste(parentNode, templateNode) {
+  const matchingParents = findAllNodesByPath(nodes, parentNode.source?.path);
+  let newChild = undefined;
+
+  for (const matchingParent of matchingParents) {
+    const childPath = [
+      ...matchingParent.source.path,
+      matchingParent.children.length
+    ];
+    const childNode = cloneCopiedNodeForPaste(templateNode, childPath);
+
+    matchingParent.children.push(childNode);
+
+    if (matchingParent.source?.startTag) {
+      matchingParent.source.startTag = matchingParent.source.startTag.replace(
+        /\/\s*>$/,
+        ">"
+      );
+    }
+
+    if (!newChild) {
+      newChild = childNode;
+    }
+  }
+
+  if (!newChild) {
+    const childPath = [...parentNode.source.path, parentNode.children.length];
+
+    newChild = cloneCopiedNodeForPaste(templateNode, childPath);
+    parentNode.children.push(newChild);
+  }
+
+  refreshRootPaths();
+  return newChild;
+}
+
 function applyLocalNodeDelete(pathToDelete, deleteReferencedBehaviorTree, nodeToDelete) {
   const referencedIds =
     deleteReferencedBehaviorTree && isSubTreeNode(nodeToDelete)
@@ -2089,6 +2265,10 @@ function applyLocalNodeDelete(pathToDelete, deleteReferencedBehaviorTree, nodeTo
   removeNodeByPath(nodes, pathToDelete);
 
   for (const referencedId of referencedIds) {
+    if (hasSubTreeReferenceToBehaviorTree(nodes, referencedId)) {
+      continue;
+    }
+
     removeBehaviorTreeById(nodes, referencedId);
   }
 
@@ -2232,6 +2412,30 @@ function getReferencedBehaviorTreeId(node) {
   const id = node.attributes?.ID?.trim();
 
   return id || undefined;
+}
+
+function hasSubTreeReferenceToBehaviorTree(roots, behaviorTreeId) {
+  for (const root of roots) {
+    if (hasSubTreeReferenceToBehaviorTreeRecursive(root, behaviorTreeId)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function hasSubTreeReferenceToBehaviorTreeRecursive(node, behaviorTreeId) {
+  if (isSubTreeNode(node) && node.attributes?.ID === behaviorTreeId) {
+    return true;
+  }
+
+  for (const child of node.children ?? []) {
+    if (hasSubTreeReferenceToBehaviorTreeRecursive(child, behaviorTreeId)) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 function removeNodeByPath(roots, path) {
@@ -2435,6 +2639,117 @@ function cloneImportedTreeNodeRecursive(templateNode, path) {
   );
 
   return clonedNode;
+}
+
+function cloneNodeForClipboard(node) {
+  return cloneNodeForClipboardRecursive(node);
+}
+
+function cloneNodeForClipboardRecursive(node) {
+  return {
+    id: node.id,
+    tag: node.tag,
+    kind: node.kind,
+    name: node.name,
+    attributes: {
+      ...(node.attributes ?? {})
+    },
+    children: isSubTreeNode(node)
+      ? []
+      : (node.children ?? []).map(cloneNodeForClipboardRecursive),
+    source: {
+      ...(node.source ?? {}),
+      path: [...(node.source?.path ?? [])]
+    },
+    definitionKnown: node.definitionKnown,
+    definition: node.definition
+  };
+}
+
+function cloneCopiedNodeForPaste(templateNode, path) {
+  localNodeCounter += 1;
+
+  const attributes = {
+    ...(templateNode.attributes ?? {})
+  };
+
+  if (attributes.name) {
+    attributes.name = `${attributes.name}_copy`;
+  }
+
+  const clonedNode = {
+    id: `local-node-${localNodeCounter}`,
+    tag: templateNode.tag,
+    kind: templateNode.kind,
+    name: attributes.name ?? attributes.ID,
+    attributes,
+    children: [],
+    source: {
+      path,
+      startOffset: -1,
+      endOpenTagOffset: -1,
+      line: -1,
+      column: -1,
+      startTag: buildStartTagForCopiedNode(templateNode, attributes)
+    },
+    definitionKnown: templateNode.definitionKnown,
+    definition: templateNode.definition
+  };
+
+  clonedNode.children = (templateNode.children ?? []).map((child, index) =>
+    cloneCopiedChildNodeForPaste(child, [...path, index])
+  );
+
+  return clonedNode;
+}
+
+function cloneCopiedChildNodeForPaste(templateNode, path) {
+  localNodeCounter += 1;
+
+  const attributes = {
+    ...(templateNode.attributes ?? {})
+  };
+
+  const clonedNode = {
+    id: `local-node-${localNodeCounter}`,
+    tag: templateNode.tag,
+    kind: templateNode.kind,
+    name: attributes.name ?? attributes.ID,
+    attributes,
+    children: [],
+    source: {
+      path,
+      startOffset: -1,
+      endOpenTagOffset: -1,
+      line: -1,
+      column: -1,
+      startTag: buildStartTagForCopiedNode(templateNode, attributes)
+    },
+    definitionKnown: templateNode.definitionKnown,
+    definition: templateNode.definition
+  };
+
+  clonedNode.children = (templateNode.children ?? []).map((child, index) =>
+    cloneCopiedChildNodeForPaste(child, [...path, index])
+  );
+
+  return clonedNode;
+}
+
+function buildStartTagForCopiedNode(templateNode, attributes) {
+  const startTag = templateNode.source?.startTag;
+
+  if (!startTag) {
+    return buildSelfClosingStartTag(templateNode.tag, attributes);
+  }
+
+  let updatedStartTag = startTag;
+
+  for (const [name, value] of Object.entries(attributes)) {
+    updatedStartTag = setAttributeInOpenTag(updatedStartTag, name, value);
+  }
+
+  return updatedStartTag;
 }
 
 function createLocalChildNode(tagName, attributes, definition, path) {

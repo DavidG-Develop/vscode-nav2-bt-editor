@@ -1,6 +1,9 @@
 import assert = require("node:assert/strict");
 import test = require("node:test");
 import {
+  deleteXmlNodeByPath,
+  hasSubTreeReferenceToBehaviorTree,
+  insertXmlNodeCopyByPath,
   insertXmlChildNodeByPath,
   moveXmlNodeByPath,
   parseBehaviorTreeXml
@@ -150,4 +153,122 @@ test("expands a self-closing parent without adding blank lines", () => {
 
   assert.doesNotMatch(result.xmlText, /\n[ \t]*\n/);
   assert.match(result.xmlText, /<Sequence>\n    <AlwaysSuccess\/>\n  <\/Sequence>/);
+});
+
+test("copies a named node as the last child with a copy suffix", () => {
+  const xmlText = [
+    '<BehaviorTree ID="MainTree">',
+    "  <Sequence>",
+    '    <CloseDoor name="door" door_id="{door_id}"/>',
+    "    <AlwaysSuccess/>",
+    "  </Sequence>",
+    "</BehaviorTree>"
+  ].join("\n");
+  const tree = parseFirstTree(xmlText);
+  const sequence = tree.children[0];
+  const closeDoor = sequence.children[0];
+
+  const result = insertXmlNodeCopyByPath(
+    xmlText,
+    closeDoor.source.path,
+    sequence.source.path
+  );
+
+  assert.equal(
+    result.xmlText,
+    [
+      '<BehaviorTree ID="MainTree">',
+      "  <Sequence>",
+      '    <CloseDoor name="door" door_id="{door_id}"/>',
+      "    <AlwaysSuccess/>",
+      '    <CloseDoor name="door_copy" door_id="{door_id}"/>',
+      "  </Sequence>",
+      "</BehaviorTree>"
+    ].join("\n")
+  );
+  assert.deepEqual(result.copiedPath, [...sequence.source.path, 2]);
+});
+
+test("copies a nested node subtree with target indentation", () => {
+  const xmlText = [
+    '<BehaviorTree ID="MainTree">',
+    "  <Sequence>",
+    '    <Fallback name="recover">',
+    "      <AlwaysFailure/>",
+    "      <AlwaysSuccess/>",
+    "    </Fallback>",
+    "  </Sequence>",
+    "</BehaviorTree>"
+  ].join("\n");
+  const tree = parseFirstTree(xmlText);
+  const sequence = tree.children[0];
+  const fallback = sequence.children[0];
+
+  const result = insertXmlNodeCopyByPath(
+    xmlText,
+    fallback.source.path,
+    sequence.source.path
+  );
+
+  assert.equal(
+    result.xmlText,
+    [
+      '<BehaviorTree ID="MainTree">',
+      "  <Sequence>",
+      '    <Fallback name="recover">',
+      "      <AlwaysFailure/>",
+      "      <AlwaysSuccess/>",
+      "    </Fallback>",
+      '    <Fallback name="recover_copy">',
+      "      <AlwaysFailure/>",
+      "      <AlwaysSuccess/>",
+      "    </Fallback>",
+      "  </Sequence>",
+      "</BehaviorTree>"
+    ].join("\n")
+  );
+  assert.doesNotMatch(result.xmlText, /\n[ \t]*\n/);
+});
+
+test("keeps subtree implementation while another call references it", () => {
+  const xmlText = [
+    '<BehaviorTree ID="MainTree">',
+    "  <Sequence>",
+    '    <SubTree ID="InitTree" _autoremap="true"/>',
+    '    <SubTree ID="InitTree" _autoremap="true"/>',
+    "  </Sequence>",
+    "</BehaviorTree>",
+    '<BehaviorTree ID="InitTree">',
+    "  <AlwaysSuccess/>",
+    "</BehaviorTree>"
+  ].join("\n");
+  const trees = parseBehaviorTreeXml(xmlText);
+  assert.equal(trees.length, 2);
+  const tree = trees[0];
+  const sequence = tree.children[0];
+  const firstSubTree = sequence.children[0];
+
+  const afterFirstDelete = deleteXmlNodeByPath(
+    xmlText,
+    firstSubTree.source.path
+  ).xmlText;
+
+  assert.equal(
+    hasSubTreeReferenceToBehaviorTree(afterFirstDelete, "InitTree"),
+    true
+  );
+
+  const reparsedTrees = parseBehaviorTreeXml(afterFirstDelete);
+  assert.equal(reparsedTrees.length, 2);
+  const reparsedTree = reparsedTrees[0];
+  const remainingSubTree = reparsedTree.children[0].children[0];
+  const afterSecondDelete = deleteXmlNodeByPath(
+    afterFirstDelete,
+    remainingSubTree.source.path
+  ).xmlText;
+
+  assert.equal(
+    hasSubTreeReferenceToBehaviorTree(afterSecondDelete, "InitTree"),
+    false
+  );
 });

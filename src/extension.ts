@@ -6,9 +6,11 @@ import {
   deleteBehaviorTreeById,
   deleteXmlNodeByPath,
   getTreeNodeDefinitionCatalog,
+  hasSubTreeReferenceToBehaviorTree,
   insertBehaviorTreeAfterPath,
   insertBehaviorTreeXmlAfterPath,
   insertXmlChildNodeByPath,
+  insertXmlNodeCopyByPath,
   moveXmlNodeByPath,
   parseBehaviorTreeTemplatesFromXml,
   parseBehaviorTreeXml,
@@ -58,6 +60,11 @@ type WebviewMessage =
       type: "moveNode";
       path: number[];
       targetIndex: number;
+    }
+  | {
+      type: "pasteNode";
+      sourcePath: number[];
+      parentPath: number[];
     };
 
 type ImportedDefinitionQuickPickItem = vscode.QuickPickItem & {
@@ -318,6 +325,41 @@ export function activate(context: vscode.ExtensionContext): void {
               if (!saved) {
                 vscode.window.showWarningMessage(
                   "XML child node was added, but the file could not be saved automatically."
+                );
+              }
+            }
+
+            syncWebviewFromDocument();
+
+            return;
+          }
+
+          if (message.type === "pasteNode") {
+            suppressEditorSideEffects(2500);
+
+            const result = await pasteNode(targetDocument, message);
+
+            if (!result) {
+              suppressDocumentRefreshUntil = 0;
+              suppressXmlSelectionSyncUntil = 0;
+              syncWebviewFromDocument();
+              return;
+            }
+
+            selectedPath = result.copiedPath;
+
+            const autoSaveEdits = getAutoSaveEditsSetting(targetDocument.uri);
+
+            if (autoSaveEdits) {
+              suppressEditorSideEffects(2500);
+
+              const saved = await targetDocument.save();
+
+              suppressEditorSideEffects(2500);
+
+              if (!saved) {
+                vscode.window.showWarningMessage(
+                  "XML node was pasted, but the file could not be saved automatically."
                 );
               }
             }
@@ -1517,6 +1559,47 @@ async function addChildNode(
   };
 }
 
+async function pasteNode(
+  document: vscode.TextDocument,
+  message: Extract<WebviewMessage, { type: "pasteNode" }>
+): Promise<{ copiedPath: number[] } | undefined> {
+  const xmlText = document.getText();
+
+  let result;
+
+  try {
+    result = insertXmlNodeCopyByPath(
+      xmlText,
+      message.sourcePath,
+      message.parentPath
+    );
+  } catch (error) {
+    const messageText = error instanceof Error ? error.message : String(error);
+    vscode.window.showErrorMessage(messageText);
+    return undefined;
+  }
+
+  if (result.xmlText === xmlText) {
+    return {
+      copiedPath: result.copiedPath
+    };
+  }
+
+  const success = await replaceFullDocument(
+    document,
+    result.xmlText,
+    "Failed to paste XML node."
+  );
+
+  if (!success) {
+    return undefined;
+  }
+
+  return {
+    copiedPath: result.copiedPath
+  };
+}
+
 async function addBehaviorTree(
   context: vscode.ExtensionContext,
   document: vscode.TextDocument,
@@ -1590,6 +1673,10 @@ async function deleteNode(
   }
 
   for (const referencedBehaviorTreeId of referencedBehaviorTreeIds) {
+    if (hasSubTreeReferenceToBehaviorTree(updatedXml, referencedBehaviorTreeId)) {
+      continue;
+    }
+
     try {
       updatedXml = deleteBehaviorTreeById(
         updatedXml,

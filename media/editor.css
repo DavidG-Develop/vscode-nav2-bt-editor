@@ -262,10 +262,17 @@ body {
   cursor: pointer;
 }
 
-.attr-apply-button:hover,
-#reveal-node-button:hover,
-#add-attr-button:hover {
+.attr-apply-button:hover:not(:disabled),
+#reveal-node-button:hover:not(:disabled),
+#add-attr-button:hover:not(:disabled) {
   background: var(--vscode-button-hoverBackground);
+}
+
+.attr-apply-button:disabled,
+#reveal-node-button:disabled,
+#add-attr-button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 #reveal-node-button {
