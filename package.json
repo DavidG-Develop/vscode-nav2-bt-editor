@@ -2,7 +2,7 @@
   "name": "vscode-nav2-bt-editor",
   "displayName": "Nav2 BT Editor",
   "description": "Visual editor for ROS 2 Nav2 and BehaviorTree.CPP XML behavior trees.",
-  "version": "0.6.4",
+  "version": "0.6.5",
   "publisher": "DavidG-Develop",
   "repository": {
     "type": "git",
