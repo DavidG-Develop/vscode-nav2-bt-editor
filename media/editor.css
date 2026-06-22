@@ -149,6 +149,13 @@ body {
   filter: drop-shadow(0 0 6px rgba(55, 180, 95, 0.6));
 }
 
+.bt-node-group.drag-navigation-pending .bt-shape {
+  stroke: rgb(255, 193, 7);
+  stroke-width: 4;
+  stroke-dasharray: 3 5;
+  filter: drop-shadow(0 0 8px rgba(255, 193, 7, 0.72));
+}
+
 .bt-node-group.drag-valid .bt-shape {
   stroke: rgb(55, 180, 95);
   stroke-width: 4;

@@ -55,6 +55,7 @@ let suppressNextNodeClick = false;
 let suppressNextNodeClickTimer = undefined;
 let dragSubTreeOpenTimer = undefined;
 let dragSubTreeOpenPathKey = undefined;
+let dragNavigationPendingGroup = undefined;
 
 initializeActiveRoot();
 attachGlobalKeyboardHandlers();
@@ -956,6 +957,7 @@ function handleNodeDragMove(event) {
 
   if (!nodeDragState.hasMoved && movedPastThreshold) {
     nodeDragState.hasMoved = true;
+    updateSubTreeHintTextsForDrag(true);
     renderDragDropZones(nodeDragState.node);
   }
 
@@ -1096,12 +1098,18 @@ function positionDraggedNode(clientX, clientY, dx, dy) {
 }
 
 function updateDragTreeNavigationHover(clientX, clientY) {
-  if (!openOnlyOneBehaviorTree || !nodeDragState?.hasMoved) {
+  if (!nodeDragState?.hasMoved) {
     clearDragSubTreeHover();
     return;
   }
 
   const contentPoint = clientPointToContentPoint(clientX, clientY);
+
+  if (!openOnlyOneBehaviorTree) {
+    updateInlineDragSubTreeHover(contentPoint);
+    return;
+  }
+
   const hoverRoot = findBehaviorTreeNodeAtPoint(contentPoint);
 
   if (
@@ -1111,6 +1119,7 @@ function updateDragTreeNavigationHover(clientX, clientY) {
   ) {
     scheduleDragTreeNavigation(
       `up:${getPathKey(hoverRoot.source?.path)}`,
+      hoverRoot.source?.path,
       () => openParentTreeDuringDrag()
     );
     return;
@@ -1133,17 +1142,45 @@ function updateDragTreeNavigationHover(clientX, clientY) {
 
   scheduleDragTreeNavigation(
     `down:${hoverKey}`,
+    hoverPath,
     () => openSubTreeTargetDuringDrag(hoverNode)
   );
 }
 
-function scheduleDragTreeNavigation(key, navigate) {
+function updateInlineDragSubTreeHover(contentPoint) {
+  const hoverNode = findSubTreeNodeAtPoint(contentPoint);
+  const hoverPath = hoverNode?.source?.path;
+  const hoverKey = getPathKey(hoverPath);
+  const subTreeKey = hoverNode?.subTreeKey ?? getSubTreeExpansionKey(hoverNode);
+
+  if (
+    !hoverNode ||
+    !hoverKey ||
+    !subTreeKey ||
+    pathsEqual(hoverPath, nodeDragState.node.source?.path) ||
+    expandedSubTreeKeys.has(subTreeKey) ||
+    !canExpandInlineSubTreeDuringDrag(nodeDragState.node, hoverNode)
+  ) {
+    clearDragSubTreeHover();
+    return;
+  }
+
+  scheduleDragTreeNavigation(
+    `inline:${hoverKey}`,
+    hoverPath,
+    () => expandInlineSubTreeDuringDrag(hoverNode)
+  );
+}
+
+function scheduleDragTreeNavigation(key, targetPath, navigate) {
   if (key === dragSubTreeOpenPathKey) {
     return;
   }
 
   clearDragSubTreeHover();
   dragSubTreeOpenPathKey = key;
+  dragNavigationPendingGroup = nodeGroupsByPath.get(getPathKey(targetPath));
+  dragNavigationPendingGroup?.classList.add("drag-navigation-pending");
   dragSubTreeOpenTimer = window.setTimeout(navigate, DRAG_SUBTREE_OPEN_DELAY_MS);
 }
 
@@ -1152,6 +1189,8 @@ function clearDragSubTreeHover() {
     window.clearTimeout(dragSubTreeOpenTimer);
   }
 
+  dragNavigationPendingGroup?.classList.remove("drag-navigation-pending");
+  dragNavigationPendingGroup = undefined;
   dragSubTreeOpenTimer = undefined;
   dragSubTreeOpenPathKey = undefined;
 }
@@ -1161,6 +1200,17 @@ function canOpenSubTreeDuringDrag(sourceNode, subTreeNode) {
   const targetTree = targetId ? findBehaviorTreeById(nodes, targetId) : undefined;
 
   if (!targetTree || pathsEqual(targetTree.source?.path, activeRootPath)) {
+    return false;
+  }
+
+  return !containsSubTreeReferenceCycle(sourceNode, targetTree);
+}
+
+function canExpandInlineSubTreeDuringDrag(sourceNode, subTreeNode) {
+  const targetId = subTreeNode.attributes?.ID;
+  const targetTree = targetId ? findBehaviorTreeById(nodes, targetId) : undefined;
+
+  if (!targetTree) {
     return false;
   }
 
@@ -1181,6 +1231,45 @@ function openSubTreeTargetDuringDrag(subTreeNode) {
   }
 
   navigateToRootDuringDrag(targetTree, true);
+}
+
+function expandInlineSubTreeDuringDrag(subTreeNode) {
+  const subTreeKey = subTreeNode.subTreeKey ?? getSubTreeExpansionKey(subTreeNode);
+
+  if (
+    !nodeDragState?.hasMoved ||
+    !subTreeKey ||
+    expandedSubTreeKeys.has(subTreeKey) ||
+    !canExpandInlineSubTreeDuringDrag(nodeDragState.node, subTreeNode)
+  ) {
+    clearDragSubTreeHover();
+    return;
+  }
+
+  const ghost = nodeDragState.group?.cloneNode(true);
+  const clientX = nodeDragState.currentClientX;
+  const clientY = nodeDragState.currentClientY;
+
+  clearDragSubTreeHover();
+  updateSubTreeHintTextsForDrag(false);
+  clearNodeDragDropTarget();
+
+  expandedSubTreeKeys.add(subTreeKey);
+  renderTree();
+
+  if (ghost && currentViewportGroup) {
+    ghost.classList.add("drag-ghost");
+    ghost.classList.remove("drop-target");
+    ghost.classList.remove("drag-navigation-pending");
+    ghost.setAttribute("pointer-events", "none");
+    currentViewportGroup.appendChild(ghost);
+    nodeDragState.group = ghost;
+    nodeDragState.isGhost = true;
+  }
+
+  renderDragDropZones(nodeDragState.node);
+  positionDraggedNode(clientX, clientY, 0, 0);
+  updateNodeDragDropTarget(clientX, clientY);
 }
 
 function openParentTreeDuringDrag() {
@@ -1687,23 +1776,46 @@ function appendSubTreeHint(group, node) {
   hint.setAttribute("text-anchor", "middle");
   hint.setAttribute("class", "bt-text bt-text-hint");
 
+  const defaultText = getSubTreeHintText(node, false);
+  const dragText = getSubTreeHintText(node, true);
+
+  hint.dataset.defaultText = defaultText;
+  hint.dataset.dragText = dragText;
+  hint.textContent = nodeDragState?.hasMoved ? dragText : defaultText;
+
+  group.appendChild(hint);
+}
+
+function getSubTreeHintText(node, dragging) {
   if (
     openOnlyOneBehaviorTree &&
     node.attributes?.ID &&
     findBehaviorTreeById(nodes, node.attributes.ID)
   ) {
-    hint.textContent = "double-click to open";
-  } else if (node.inlineExpanded) {
-    hint.textContent = "double-click to collapse";
-  } else if (node.inlineCycle) {
-    hint.textContent = "cycle blocked";
-  } else if (node.attributes?.ID && findBehaviorTreeById(nodes, node.attributes.ID)) {
-    hint.textContent = "double-click to expand";
-  } else {
-    hint.textContent = "subtree target missing";
+    return dragging ? "hover to enter" : "double-click to enter";
   }
 
-  group.appendChild(hint);
+  if (node.inlineExpanded) {
+    return "double-click to close";
+  }
+
+  if (node.inlineCycle) {
+    return "cycle blocked";
+  }
+
+  if (node.attributes?.ID && findBehaviorTreeById(nodes, node.attributes.ID)) {
+    return dragging ? "hover to open" : "double-click to expand";
+  }
+
+  return "subtree target missing";
+}
+
+function updateSubTreeHintTextsForDrag(dragging) {
+  document.querySelectorAll(".bt-text-hint").forEach((hint) => {
+    hint.textContent = dragging
+      ? hint.dataset.dragText ?? hint.textContent
+      : hint.dataset.defaultText ?? hint.textContent;
+  });
 }
 
 function selectNode(node, center) {
