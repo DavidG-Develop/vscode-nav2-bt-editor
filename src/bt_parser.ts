@@ -69,6 +69,11 @@ export type MoveXmlNodeResult = {
   movedPath: number[];
 };
 
+export type MoveXmlNodeToParentResult = {
+  xmlText: string;
+  movedPath: number[];
+};
+
 export type CopyXmlNodeResult = {
   xmlText: string;
   copiedPath: number[];
@@ -604,6 +609,153 @@ export function insertXmlNodeCopyByPath(
   };
 }
 
+export function moveXmlNodeToParentByPath(
+  xmlText: string,
+  sourcePath: number[],
+  parentPath: number[]
+): MoveXmlNodeToParentResult {
+  if (sourcePath.length < 2) {
+    throw new Error("Root XML nodes cannot be cut from the editor.");
+  }
+
+  if (isPathPrefix(sourcePath, parentPath)) {
+    throw new Error("A node cannot be pasted into itself or one of its children.");
+  }
+
+  const roots = scanXml(xmlText);
+  const source = findNodeByPath(roots, sourcePath);
+
+  if (!source) {
+    throw new Error(
+      `Could not find source XML node at path [${sourcePath.join(", ")}].`
+    );
+  }
+
+  const parentBeforeDelete = findNodeByPath(roots, parentPath);
+
+  if (!parentBeforeDelete) {
+    throw new Error(
+      `Could not find target XML parent node at path [${parentPath.join(", ")}].`
+    );
+  }
+
+  if (
+    containsSubTreeReferenceToTargetBehaviorTree(
+      roots,
+      source,
+      parentBeforeDelete
+    )
+  ) {
+    throw new Error(
+      "This paste would create a recursive SubTree reference."
+    );
+  }
+
+  const adjustedParentPath = adjustPathAfterDeletingPath(parentPath, sourcePath);
+
+  if (!adjustedParentPath) {
+    throw new Error("A node cannot be pasted into itself or one of its children.");
+  }
+
+  const sourceRange = getNodeDeletionRange(xmlText, source);
+  const movingXml = getNodeXml(xmlText, source);
+  const xmlWithoutSource = removeBlankXmlLines(
+    xmlText.slice(0, sourceRange.start) + xmlText.slice(sourceRange.end)
+  );
+  const updatedRoots = scanXml(xmlWithoutSource);
+  const parent = findNodeByPath(updatedRoots, adjustedParentPath);
+
+  if (!parent) {
+    throw new Error(
+      `Could not find target XML parent node at path [${parentPath.join(", ")}].`
+    );
+  }
+
+  const result = insertNodeXmlIntoParent(xmlWithoutSource, parent, movingXml);
+
+  return {
+    xmlText: result.xmlText,
+    movedPath: result.insertedPath
+  };
+}
+
+function containsSubTreeReferenceToTargetBehaviorTree(
+  roots: InternalXmlNode[],
+  source: InternalXmlNode,
+  parent: InternalXmlNode
+): boolean {
+  const targetBehaviorTree = findNearestBehaviorTree(parent);
+  const targetTreeId = targetBehaviorTree?.attributes["ID"]?.trim();
+
+  if (!targetTreeId) {
+    return false;
+  }
+
+  return collectReachableSubTreeReferences(roots, source).has(targetTreeId);
+}
+
+function collectReachableSubTreeReferences(
+  roots: InternalXmlNode[],
+  node: InternalXmlNode
+): Set<string> {
+  const reachableIds = new Set<string>();
+  const idsToVisit = collectDirectSubTreeReferences(node);
+
+  for (const id of idsToVisit) {
+    collectReachableSubTreeReferenceRecursive(roots, id, reachableIds);
+  }
+
+  return reachableIds;
+}
+
+function collectReachableSubTreeReferenceRecursive(
+  roots: InternalXmlNode[],
+  behaviorTreeId: string,
+  reachableIds: Set<string>
+): void {
+  if (reachableIds.has(behaviorTreeId)) {
+    return;
+  }
+
+  reachableIds.add(behaviorTreeId);
+
+  const behaviorTree = findBehaviorTreeById(roots, behaviorTreeId);
+
+  if (!behaviorTree) {
+    return;
+  }
+
+  for (const id of collectDirectSubTreeReferences(behaviorTree)) {
+    collectReachableSubTreeReferenceRecursive(roots, id, reachableIds);
+  }
+}
+
+function collectDirectSubTreeReferences(
+  node: InternalXmlNode
+): Set<string> {
+  const references = new Set<string>();
+
+  collectDirectSubTreeReferencesRecursive(node, references);
+
+  return references;
+}
+
+function collectDirectSubTreeReferencesRecursive(
+  node: InternalXmlNode,
+  references: Set<string>
+): void {
+  if (
+    (node.tag === "SubTree" || node.tag === "SubTreePlus") &&
+    node.attributes["ID"]?.trim()
+  ) {
+    references.add(node.attributes["ID"].trim());
+  }
+
+  for (const child of node.children) {
+    collectDirectSubTreeReferencesRecursive(child, references);
+  }
+}
+
 function getNodeXml(xmlText: string, node: InternalXmlNode): string {
   const end = node.closeTag?.endOffset ?? node.source.endOpenTagOffset;
   return xmlText.slice(node.source.startOffset, end);
@@ -634,6 +786,88 @@ function formatNodeXmlForInsert(nodeXml: string, indent: string): string {
   return lines
     .map((line) => `${indent}${line.slice(commonIndent.length)}`)
     .join("\n");
+}
+
+function insertNodeXmlIntoParent(
+  xmlText: string,
+  parent: InternalXmlNode,
+  nodeXml: string
+): { xmlText: string; insertedPath: number[] } {
+  const parentIndent = getLineIndentAtOffset(xmlText, parent.source.startOffset);
+  const childIndent = `${parentIndent}  `;
+  const formattedNodeXml = formatNodeXmlForInsert(nodeXml, childIndent);
+  const insertedPath = [...parent.source.path, parent.children.length];
+  const parentOpenTag = xmlText.slice(
+    parent.source.startOffset,
+    parent.source.endOpenTagOffset
+  );
+
+  if (isSelfClosingOpenTag(parentOpenTag)) {
+    const expandedParentOpenTag = parentOpenTag.replace(/\/\s*>$/, ">");
+    const replacement = [
+      expandedParentOpenTag,
+      `\n${formattedNodeXml}`,
+      `\n${parentIndent}</${parent.tag}>`
+    ].join("");
+
+    return {
+      xmlText: removeBlankXmlLines(
+        xmlText.slice(0, parent.source.startOffset) +
+        replacement +
+        xmlText.slice(parent.source.endOpenTagOffset)
+      ),
+      insertedPath
+    };
+  }
+
+  if (!parent.closeTag) {
+    throw new Error(`Could not find closing tag for <${parent.tag}>.`);
+  }
+
+  const insertion = `\n${formattedNodeXml}\n${parentIndent}`;
+
+  return {
+    xmlText: removeBlankXmlLines(
+      xmlText.slice(0, parent.closeTag.startOffset) +
+      insertion +
+      xmlText.slice(parent.closeTag.startOffset)
+    ),
+    insertedPath
+  };
+}
+
+function adjustPathAfterDeletingPath(
+  path: number[],
+  deletedPath: number[]
+): number[] | undefined {
+  if (isPathPrefix(deletedPath, path)) {
+    return undefined;
+  }
+
+  const deletedParentPath = deletedPath.slice(0, -1);
+  const deletedIndex = deletedPath[deletedPath.length - 1];
+  const affectedDepth = deletedParentPath.length;
+
+  if (
+    path.length <= affectedDepth ||
+    !deletedParentPath.every((value, index) => value === path[index]) ||
+    path[affectedDepth] <= deletedIndex
+  ) {
+    return [...path];
+  }
+
+  const adjustedPath = [...path];
+  adjustedPath[affectedDepth] -= 1;
+
+  return adjustedPath;
+}
+
+function isPathPrefix(prefix: number[], path: number[]): boolean {
+  if (prefix.length > path.length) {
+    return false;
+  }
+
+  return prefix.every((value, index) => value === path[index]);
 }
 
 function clampIndex(value: number, min: number, max: number): number {

@@ -17,6 +17,8 @@ let selectedNodePath = window.initialSelectedPath ?? undefined;
 let selectedNodeId = undefined;
 let localNodeCounter = 0;
 let copiedNode = undefined;
+let clipboardMode = "copy";
+let clipboardWarning = undefined;
 
 let activeRootPath = undefined;
 let rootNavigationStack = [];
@@ -89,18 +91,20 @@ function attachGlobalKeyboardHandlers() {
     const modifierPressed = event.ctrlKey || event.metaKey;
 
     if (modifierPressed && key === "c") {
-      if (copySelectedNode(selectedNode)) {
-        event.preventDefault();
-      }
+      event.preventDefault();
+      copySelectedNode(selectedNode);
+      return;
+    }
 
+    if (modifierPressed && key === "x") {
+      event.preventDefault();
+      cutSelectedNode(selectedNode);
       return;
     }
 
     if (modifierPressed && key === "v") {
-      if (pasteCopiedNodeInto(selectedNode)) {
-        event.preventDefault();
-      }
-
+      event.preventDefault();
+      pasteCopiedNodeInto(selectedNode);
       return;
     }
 
@@ -1343,26 +1347,38 @@ function renderAttributeSections(node, definition, extraAttributes) {
 
 function renderCopyPasteSection(node, childLimit) {
   const canCopy = canCopyNode(node);
-  const canPaste = Boolean(copiedNode) && childLimit.canAdd;
+  const canPaste = canPasteClipboardInto(node, childLimit);
   const copiedLabel = copiedNode
-    ? `${copiedNode.tag}${copiedNode.name ? `: ${copiedNode.name}` : ""}`
+    ? `${clipboardMode === "cut" ? "Cut" : "Copied"} ${copiedNode.tag}${copiedNode.name ? `: ${copiedNode.name}` : ""}`
     : "No node copied.";
   const pasteHint = copiedNode
-    ? childLimit.canAdd
-      ? `Paste copied ${copiedNode.tag} as the last child of this node.`
-      : childLimit.reason
-    : "Copy a node first, then select a parent that can accept another child.";
+    ? canPaste
+      ? `Paste ${clipboardMode === "cut" ? "cut" : "copied"} ${copiedNode.tag} as the last child of this node.`
+      : getPasteUnavailableReason(node, childLimit)
+    : "Copy or cut a node first, then select a parent that can accept another child.";
 
   return `
-    <h3>Copy / paste</h3>
+    <h3>Copy / cut / paste</h3>
     <div class="info-box">
       Copied: ${escapeHtml(copiedLabel)}
     </div>
+    ${
+      clipboardWarning
+        ? `
+          <div class="warning-box">
+            ${escapeHtml(clipboardWarning)}
+          </div>
+        `
+        : ""
+    }
     ${
       canCopy
         ? `
           <button id="copy-node-button" class="attr-apply-button">
             Copy selected node
+          </button>
+          <button id="cut-node-button" class="attr-apply-button">
+            Cut selected node
           </button>
         `
         : `
@@ -1374,12 +1390,143 @@ function renderCopyPasteSection(node, childLimit) {
     <button
       id="paste-node-button"
       class="attr-apply-button"
-      ${canPaste ? "" : "disabled"}
       title="${escapeHtml(pasteHint)}"
     >
       Paste as child
     </button>
   `;
+}
+
+function canPasteClipboardInto(node, childLimit) {
+  if (!copiedNode || !childLimit.canAdd) {
+    return false;
+  }
+
+  if (
+    clipboardMode === "cut" &&
+    isPathPrefix(copiedNode.source?.path, node.source?.path)
+  ) {
+    return false;
+  }
+
+  if (containsCutSubTreeReferenceToTargetBehaviorTree(copiedNode, node)) {
+    return false;
+  }
+
+  return true;
+}
+
+function getPasteUnavailableReason(node, childLimit) {
+  if (!copiedNode) {
+    return "Copy or cut a node first, then select a parent that can accept another child.";
+  }
+
+  if (!childLimit.canAdd) {
+    return childLimit.reason;
+  }
+
+  if (
+    !Array.isArray(copiedNode.source?.path) ||
+    !Array.isArray(node.source?.path)
+  ) {
+    return "Paste is not available until both nodes have been reparsed from XML.";
+  }
+
+  if (
+    clipboardMode === "cut" &&
+    isPathPrefix(copiedNode?.source?.path, node.source?.path)
+  ) {
+    return "A cut node cannot be pasted into itself or one of its children.";
+  }
+
+  if (containsCutSubTreeReferenceToTargetBehaviorTree(copiedNode, node)) {
+    return "This paste would create a recursive SubTree reference.";
+  }
+
+  return "Paste is not available for this node.";
+}
+
+function showClipboardWarning(node, reason) {
+  clipboardWarning = reason;
+  renderDetails(node);
+}
+
+function containsCutSubTreeReferenceToTargetBehaviorTree(
+  sourceNode,
+  targetParentNode
+) {
+  if (
+    clipboardMode !== "cut" ||
+    !sourceNode ||
+    !targetParentNode
+  ) {
+    return false;
+  }
+
+  const targetRoot = findRootContainingPath(
+    nodes,
+    targetParentNode.source?.path
+  );
+  const targetTreeId =
+    targetRoot?.tag === "BehaviorTree"
+      ? targetRoot.attributes?.ID?.trim()
+      : undefined;
+
+  if (!targetTreeId) {
+    return false;
+  }
+
+  return collectReachableSubTreeReferences(sourceNode).has(targetTreeId);
+}
+
+function collectReachableSubTreeReferences(node) {
+  const reachableIds = new Set();
+  const idsToVisit = collectDirectSubTreeReferences(node);
+
+  for (const id of idsToVisit) {
+    collectReachableSubTreeReferenceRecursive(id, reachableIds);
+  }
+
+  return reachableIds;
+}
+
+function collectReachableSubTreeReferenceRecursive(behaviorTreeId, reachableIds) {
+  if (reachableIds.has(behaviorTreeId)) {
+    return;
+  }
+
+  reachableIds.add(behaviorTreeId);
+
+  const behaviorTree = findBehaviorTreeById(nodes, behaviorTreeId);
+
+  if (!behaviorTree) {
+    return;
+  }
+
+  for (const id of collectDirectSubTreeReferences(behaviorTree)) {
+    collectReachableSubTreeReferenceRecursive(id, reachableIds);
+  }
+}
+
+function collectDirectSubTreeReferences(node) {
+  const references = new Set();
+
+  collectDirectSubTreeReferencesRecursive(node, references);
+
+  return references;
+}
+
+function collectDirectSubTreeReferencesRecursive(node, references) {
+  if (
+    isSubTreeNode(node) &&
+    node.attributes?.ID?.trim()
+  ) {
+    references.add(node.attributes.ID.trim());
+  }
+
+  for (const child of node.children ?? []) {
+    collectDirectSubTreeReferencesRecursive(child, references);
+  }
 }
 
 function renderDeleteSection(node) {
@@ -1685,11 +1832,18 @@ function attachAttributeHandlers(node) {
 
 function attachCopyPasteHandlers(node) {
   const copyButton = document.getElementById("copy-node-button");
+  const cutButton = document.getElementById("cut-node-button");
   const pasteButton = document.getElementById("paste-node-button");
 
   if (copyButton) {
     copyButton.addEventListener("click", () => {
       copySelectedNode(node);
+    });
+  }
+
+  if (cutButton) {
+    cutButton.addEventListener("click", () => {
+      cutSelectedNode(node);
     });
   }
 
@@ -1748,42 +1902,115 @@ function requestDeleteNode(node, deleteReferencedBehaviorTree) {
 
 function copySelectedNode(node) {
   if (!canCopyNode(node)) {
+    showClipboardWarning(node, getCopyUnavailableReason(node));
     return false;
   }
 
   const sourceNode = findNodeByPathInForest(nodes, node.source?.path) ?? node;
 
   copiedNode = cloneNodeForClipboard(sourceNode);
+  clipboardMode = "copy";
+  clipboardWarning = undefined;
+  renderDetails(node);
+  return true;
+}
+
+function cutSelectedNode(node) {
+  if (!canCopyNode(node)) {
+    showClipboardWarning(node, getCopyUnavailableReason(node));
+    return false;
+  }
+
+  const sourceNode = findNodeByPathInForest(nodes, node.source?.path) ?? node;
+
+  copiedNode = cloneNodeForClipboard(sourceNode);
+  clipboardMode = "cut";
+  clipboardWarning = undefined;
   renderDetails(node);
   return true;
 }
 
 function pasteCopiedNodeInto(parentNode) {
+  const childLimit = getChildLimitInfo(parentNode);
+
   if (!copiedNode) {
+    showClipboardWarning(
+      parentNode,
+      getPasteUnavailableReason(parentNode, childLimit)
+    );
     return false;
   }
 
-  const childLimit = getChildLimitInfo(parentNode);
+  const sourcePath = copiedNode.source?.path;
+  const parentPath = parentNode.source?.path;
+
+  if (!Array.isArray(sourcePath) || !Array.isArray(parentPath)) {
+    showClipboardWarning(
+      parentNode,
+      getPasteUnavailableReason(parentNode, childLimit)
+    );
+    return false;
+  }
 
   if (!childLimit.canAdd) {
-    renderDetails(parentNode);
+    showClipboardWarning(
+      parentNode,
+      getPasteUnavailableReason(parentNode, childLimit)
+    );
     return false;
+  }
+
+  if (
+    clipboardMode === "cut" &&
+    isPathPrefix(sourcePath, parentPath)
+  ) {
+    showClipboardWarning(
+      parentNode,
+      getPasteUnavailableReason(parentNode, childLimit)
+    );
+    return false;
+  }
+
+  if (containsCutSubTreeReferenceToTargetBehaviorTree(copiedNode, parentNode)) {
+    showClipboardWarning(
+      parentNode,
+      getPasteUnavailableReason(parentNode, childLimit)
+    );
+    return false;
+  }
+
+  if (clipboardMode === "cut") {
+    vscode.postMessage({
+      type: "pasteNode",
+      sourcePath,
+      parentPath,
+      move: true
+    });
+
+    copiedNode = undefined;
+    clipboardMode = "copy";
+    clipboardWarning = undefined;
+    renderDetails(parentNode);
+    return true;
   }
 
   const newChild = applyLocalCopiedNodePaste(parentNode, copiedNode);
 
   if (!newChild) {
+    showClipboardWarning(parentNode, "Paste could not be applied.");
     return false;
   }
 
   vscode.postMessage({
     type: "pasteNode",
-    sourcePath: copiedNode.source.path,
-    parentPath: parentNode.source.path
+    sourcePath,
+    parentPath,
+    move: false
   });
 
   selectedNodePath = newChild.source.path;
   selectedNodeId = newChild.id;
+  clipboardWarning = undefined;
 
   renderDetails(newChild);
   renderTree();

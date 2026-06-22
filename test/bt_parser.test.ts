@@ -5,6 +5,7 @@ import {
   hasSubTreeReferenceToBehaviorTree,
   insertXmlNodeCopyByPath,
   insertXmlChildNodeByPath,
+  moveXmlNodeToParentByPath,
   moveXmlNodeByPath,
   parseBehaviorTreeXml
 } from "../src/bt_parser";
@@ -228,6 +229,258 @@ test("copies a nested node subtree with target indentation", () => {
     ].join("\n")
   );
   assert.doesNotMatch(result.xmlText, /\n[ \t]*\n/);
+});
+
+test("copies a subtree call without duplicating its implementation", () => {
+  const xmlText = [
+    '<BehaviorTree ID="MainTree">',
+    "  <Sequence>",
+    '    <SubTree ID="InitTree" _autoremap="true"/>',
+    "  </Sequence>",
+    "</BehaviorTree>",
+    '<BehaviorTree ID="InitTree">',
+    "  <AlwaysSuccess/>",
+    "</BehaviorTree>"
+  ].join("\n");
+  const trees = parseBehaviorTreeXml(xmlText);
+  assert.equal(trees.length, 2);
+  const sequence = trees[0].children[0];
+  const subTree = sequence.children[0];
+
+  const result = insertXmlNodeCopyByPath(
+    xmlText,
+    subTree.source.path,
+    sequence.source.path
+  );
+
+  assert.match(
+    result.xmlText,
+    /<SubTree ID="InitTree" _autoremap="true"\/>\n    <SubTree ID="InitTree" _autoremap="true"\/>/
+  );
+  assert.equal(
+    result.xmlText.match(/<BehaviorTree ID="InitTree">/g)?.length,
+    1
+  );
+});
+
+test("cuts a node into another parent without renaming it", () => {
+  const xmlText = [
+    '<BehaviorTree ID="MainTree">',
+    "  <Sequence>",
+    '    <CloseDoor name="door" door_id="{door_id}"/>',
+    "    <Fallback>",
+    "      <AlwaysFailure/>",
+    "    </Fallback>",
+    "  </Sequence>",
+    "</BehaviorTree>"
+  ].join("\n");
+  const tree = parseFirstTree(xmlText);
+  const sequence = tree.children[0];
+  const closeDoor = sequence.children[0];
+  const fallback = sequence.children[1];
+
+  const result = moveXmlNodeToParentByPath(
+    xmlText,
+    closeDoor.source.path,
+    fallback.source.path
+  );
+
+  assert.equal(
+    result.xmlText,
+    [
+      '<BehaviorTree ID="MainTree">',
+      "  <Sequence>",
+      "    <Fallback>",
+      "      <AlwaysFailure/>",
+      '      <CloseDoor name="door" door_id="{door_id}"/>',
+      "    </Fallback>",
+      "  </Sequence>",
+      "</BehaviorTree>"
+    ].join("\n")
+  );
+  assert.doesNotMatch(result.xmlText, /door_copy/);
+});
+
+test("cuts a child to the end of the same parent", () => {
+  const xmlText = [
+    '<BehaviorTree ID="MainTree">',
+    "  <Sequence>",
+    '    <CloseDoor name="door" door_id="{door_id}"/>',
+    "    <AlignToDock/>",
+    "    <CancelSpin/>",
+    "  </Sequence>",
+    "</BehaviorTree>"
+  ].join("\n");
+  const tree = parseFirstTree(xmlText);
+  const sequence = tree.children[0];
+  const closeDoor = sequence.children[0];
+
+  const result = moveXmlNodeToParentByPath(
+    xmlText,
+    closeDoor.source.path,
+    sequence.source.path
+  );
+
+  assert.equal(
+    result.xmlText,
+    [
+      '<BehaviorTree ID="MainTree">',
+      "  <Sequence>",
+      "    <AlignToDock/>",
+      "    <CancelSpin/>",
+      '    <CloseDoor name="door" door_id="{door_id}"/>',
+      "  </Sequence>",
+      "</BehaviorTree>"
+    ].join("\n")
+  );
+  assert.deepEqual(result.movedPath, [...sequence.source.path, 2]);
+});
+
+test("cuts a node from one BehaviorTree into another BehaviorTree", () => {
+  const xmlText = [
+    '<root main_tree_to_execute="MainTree">',
+    '  <BehaviorTree ID="MainTree">',
+    '    <Sequence name="MainMission">',
+    '      <SubTree ID="NavigateMissionSubTree" _autoremap="true"/>',
+    '      <NavigateThroughDoor door_id="{door_id}" goal="{goal}"/>',
+    "    </Sequence>",
+    "  </BehaviorTree>",
+    '  <BehaviorTree ID="NavigateMissionSubTree">',
+    '    <Sequence name="NavigateMission">',
+    '      <ComputePathToPose goal="{goal}" path="{path}"/>',
+    "    </Sequence>",
+    "  </BehaviorTree>",
+    "</root>"
+  ].join("\n");
+  const trees = parseBehaviorTreeXml(xmlText);
+  assert.equal(trees.length, 2);
+  const mainSequence = trees[0].children[0];
+  const navigateThroughDoor = mainSequence.children[1];
+  const navigateSequence = trees[1].children[0];
+
+  const result = moveXmlNodeToParentByPath(
+    xmlText,
+    navigateThroughDoor.source.path,
+    navigateSequence.source.path
+  );
+
+  assert.equal(
+    result.xmlText,
+    [
+      '<root main_tree_to_execute="MainTree">',
+      '  <BehaviorTree ID="MainTree">',
+      '    <Sequence name="MainMission">',
+      '      <SubTree ID="NavigateMissionSubTree" _autoremap="true"/>',
+      "    </Sequence>",
+      "  </BehaviorTree>",
+      '  <BehaviorTree ID="NavigateMissionSubTree">',
+      '    <Sequence name="NavigateMission">',
+      '      <ComputePathToPose goal="{goal}" path="{path}"/>',
+      '      <NavigateThroughDoor door_id="{door_id}" goal="{goal}"/>',
+      "    </Sequence>",
+      "  </BehaviorTree>",
+      "</root>"
+    ].join("\n")
+  );
+  assert.deepEqual(result.movedPath, [...navigateSequence.source.path, 1]);
+});
+
+test("rejects cutting a SubTree call into the BehaviorTree it references", () => {
+  const xmlText = [
+    '<BehaviorTree ID="MainTree">',
+    "  <Sequence>",
+    '    <SubTree ID="InitTree" _autoremap="true"/>',
+    "  </Sequence>",
+    "</BehaviorTree>",
+    '<BehaviorTree ID="InitTree">',
+    "  <Sequence>",
+    "    <AlwaysSuccess/>",
+    "  </Sequence>",
+    "</BehaviorTree>"
+  ].join("\n");
+  const trees = parseBehaviorTreeXml(xmlText);
+  assert.equal(trees.length, 2);
+  const subTreeCall = trees[0].children[0].children[0];
+  const referencedSequence = trees[1].children[0];
+
+  assert.throws(
+    () =>
+      moveXmlNodeToParentByPath(
+        xmlText,
+        subTreeCall.source.path,
+        referencedSequence.source.path
+      ),
+    /recursive SubTree reference/
+  );
+});
+
+test("rejects cutting a parent containing a SubTree call into that referenced BehaviorTree", () => {
+  const xmlText = [
+    '<BehaviorTree ID="MainTree">',
+    '  <Sequence name="MainMission">',
+    '    <Fallback name="ParentWithSubTree">',
+    '      <SubTree ID="InitTree" _autoremap="true"/>',
+    "      <AlwaysFailure/>",
+    "    </Fallback>",
+    "  </Sequence>",
+    "</BehaviorTree>",
+    '<BehaviorTree ID="InitTree">',
+    "  <Sequence>",
+    "    <AlwaysSuccess/>",
+    "  </Sequence>",
+    "</BehaviorTree>"
+  ].join("\n");
+  const trees = parseBehaviorTreeXml(xmlText);
+  assert.equal(trees.length, 2);
+  const parentWithSubTree = trees[0].children[0].children[0];
+  const referencedSequence = trees[1].children[0];
+
+  assert.throws(
+    () =>
+      moveXmlNodeToParentByPath(
+        xmlText,
+        parentWithSubTree.source.path,
+        referencedSequence.source.path
+      ),
+    /recursive SubTree reference/
+  );
+});
+
+test("rejects cutting a parent into a BehaviorTree reachable through nested SubTree calls", () => {
+  const xmlText = [
+    '<BehaviorTree ID="MainTree">',
+    '  <Sequence name="MainMission">',
+    '    <Fallback name="ParentWithSubTree">',
+    '      <SubTree ID="TreeA" _autoremap="true"/>',
+    "      <AlwaysFailure/>",
+    "    </Fallback>",
+    "  </Sequence>",
+    "</BehaviorTree>",
+    '<BehaviorTree ID="TreeA">',
+    "  <Sequence>",
+    '    <SubTree ID="TreeB" _autoremap="true"/>',
+    "  </Sequence>",
+    "</BehaviorTree>",
+    '<BehaviorTree ID="TreeB">',
+    "  <Sequence>",
+    "    <AlwaysSuccess/>",
+    "  </Sequence>",
+    "</BehaviorTree>"
+  ].join("\n");
+  const trees = parseBehaviorTreeXml(xmlText);
+  assert.equal(trees.length, 3);
+  const parentWithSubTree = trees[0].children[0].children[0];
+  const nestedReferencedSequence = trees[2].children[0];
+
+  assert.throws(
+    () =>
+      moveXmlNodeToParentByPath(
+        xmlText,
+        parentWithSubTree.source.path,
+        nestedReferencedSequence.source.path
+      ),
+    /recursive SubTree reference/
+  );
 });
 
 test("keeps subtree implementation while another call references it", () => {

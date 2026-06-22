@@ -33,9 +33,6 @@
         <ApproachDock/>
       </Sequence>
       <Sequence name="DoorAlreadyOpenSequence">
-        <Inverter>
-          <IsDoorClosed door_id="{door_id}"/>
-        </Inverter>
         <NavigateThroughDoor door_id="{door_id}" goal="{goal}"/>
       </Sequence>
     </Fallback>

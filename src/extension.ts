@@ -11,6 +11,7 @@ import {
   insertBehaviorTreeXmlAfterPath,
   insertXmlChildNodeByPath,
   insertXmlNodeCopyByPath,
+  moveXmlNodeToParentByPath,
   moveXmlNodeByPath,
   parseBehaviorTreeTemplatesFromXml,
   parseBehaviorTreeXml,
@@ -65,6 +66,7 @@ type WebviewMessage =
       type: "pasteNode";
       sourcePath: number[];
       parentPath: number[];
+      move?: boolean;
     };
 
 type ImportedDefinitionQuickPickItem = vscode.QuickPickItem & {
@@ -1564,6 +1566,42 @@ async function pasteNode(
   message: Extract<WebviewMessage, { type: "pasteNode" }>
 ): Promise<{ copiedPath: number[] } | undefined> {
   const xmlText = document.getText();
+
+  if (message.move) {
+    let result;
+
+    try {
+      result = moveXmlNodeToParentByPath(
+        xmlText,
+        message.sourcePath,
+        message.parentPath
+      );
+    } catch (error) {
+      const messageText = error instanceof Error ? error.message : String(error);
+      vscode.window.showErrorMessage(messageText);
+      return undefined;
+    }
+
+    if (result.xmlText === xmlText) {
+      return {
+        copiedPath: result.movedPath
+      };
+    }
+
+    const success = await replaceFullDocument(
+      document,
+      result.xmlText,
+      "Failed to paste XML node."
+    );
+
+    if (!success) {
+      return undefined;
+    }
+
+    return {
+      copiedPath: result.movedPath
+    };
+  }
 
   let result;
 
