@@ -1,4 +1,4 @@
-# Nav2 Behavior Tree Editor for VS Code
+# Nav2 BT Editor for VS Code
 
 Nav2 BT Editor is a Visual Studio Code extension for editing ROS 2 Nav2 and BehaviorTree.CPP XML behavior trees as an interactive graph.
 
@@ -31,7 +31,7 @@ You can also right-click an XML file in the Explorer and select the same command
 - Renders BehaviorTree.CPP XML as an interactive tree graph.
 - Edits node attributes and writes the changes back into the XML file.
 - Adds new child nodes from known BehaviorTree.CPP/Nav2 node types or custom XML tag names.
-- Reorders sibling nodes by dragging them in the graph and updates XML child order.
+- Reorders and moves nodes by dragging them in the graph and updates XML child order.
 - Deletes nodes, including referenced nested BehaviorTree definitions when requested.
 - Imports `TreeNodesModel` XML files from local files or URLs.
 - Imports external `BehaviorTree` XML files as reusable SubTree templates.
@@ -87,9 +87,13 @@ Enable `nav2BtEditor.includeFullBehaviorTree` if you want the editor to also cop
 
 ## Moving nodes
 
-Drag a node horizontally relative to its siblings to reorder it.
+Drag a node to reorder it or move it under another valid parent.
 
-When the node is dropped before or after another child under the same parent, the XML child order is updated to match the graph order.
+Valid drop areas are shown while dragging. The dragged node turns green over a valid drop target and red outside valid drop targets. Invalid drops snap back without changing XML.
+
+When the node is dropped before or after another child, the XML child order is updated to match the graph order. Cross-parent drops use the horizontal drop position to decide where the moved node is inserted among the target parent's children.
+
+While dragging, hold the middle mouse button or `Alt` and move the mouse to pan the graph without dropping the node.
 
 Root XML nodes cannot be reordered from the editor.
 
@@ -148,7 +152,9 @@ Nav2 BT Editor: Clear All BehaviorTree SubTrees
 
 By default, the editor shows one `BehaviorTree` at a time.
 
-Double-click a `SubTree` node to open the referenced `BehaviorTree` when that target exists in the current XML file. Missing or reference-only imported SubTrees do not show the double-click hint.
+Double-click a `SubTree` node to enter the referenced `BehaviorTree` when that target exists in the current XML file. Missing or reference-only imported SubTrees do not show the double-click hint.
+
+While dragging in the default one-tree mode, hover over a `SubTree` for about one second to enter it. Hover over the current `BehaviorTree` root node for about one second to go one tree up. The hovered navigation target is highlighted while the timer is pending.
 
 Toolbar controls:
 
@@ -160,7 +166,7 @@ Fit   Fit the current graph into view
 -     Zoom out
 ```
 
-If inline SubTree expansion is enabled, double-clicking a SubTree expands or collapses it inside the current graph.
+If inline SubTree expansion is enabled with `nav2BtEditor.openOnlyOneBehaviorTree: false`, double-clicking a SubTree opens or closes it inside the current graph. While dragging in this mode, hovering over a closed SubTree for about one second opens it in place.
 
 ## Settings
 
@@ -194,6 +200,13 @@ If inline SubTree expansion is enabled, double-clicking a SubTree expands or col
 | `Nav2 BT Editor: Clear All BehaviorTree SubTrees` | Remove all stored SubTree templates. |
 
 The extension command IDs use the `nav2-bt-editor.*` namespace, and settings use the `nav2BtEditor.*` namespace.
+
+Naming used by the extension:
+
+- Extension display name: `Nav2 BT Editor`
+- Package/repository name: `vscode-nav2-bt-editor`
+- Command ID namespace: `nav2-bt-editor.*`
+- Settings namespace: `nav2BtEditor.*`
 
 ## Relationship to other projects
 

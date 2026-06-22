@@ -948,9 +948,6 @@ function handleNodeDragMove(event) {
   event.preventDefault();
   event.stopPropagation();
 
-  const dx = (event.clientX - nodeDragState.startClientX) / viewState.scale;
-  const dy = (event.clientY - nodeDragState.startClientY) / viewState.scale;
-
   const movedPastThreshold =
     Math.abs(event.clientX - nodeDragState.startClientX) > 4 ||
     Math.abs(event.clientY - nodeDragState.startClientY) > 4;
@@ -961,6 +958,19 @@ function handleNodeDragMove(event) {
     renderDragDropZones(nodeDragState.node);
   }
 
+  const isPanningDuringDrag = nodeDragState.hasMoved && isDragPanEvent(event);
+
+  if (isPanningDuringDrag) {
+    const panDx = event.clientX - nodeDragState.currentClientX;
+    const panDy = event.clientY - nodeDragState.currentClientY;
+
+    viewState.x += panDx;
+    viewState.y += panDy;
+    nodeDragState.startClientX += panDx;
+    nodeDragState.startClientY += panDy;
+    applyTransform();
+  }
+
   nodeDragState.currentClientX = event.clientX;
   nodeDragState.currentClientY = event.clientY;
 
@@ -968,10 +978,22 @@ function handleNodeDragMove(event) {
     return;
   }
 
+  const dx = (event.clientX - nodeDragState.startClientX) / viewState.scale;
+  const dy = (event.clientY - nodeDragState.startClientY) / viewState.scale;
+
   positionDraggedNode(event.clientX, event.clientY, dx, dy);
 
   updateNodeDragDropTarget(event.clientX, event.clientY);
-  updateDragTreeNavigationHover(event.clientX, event.clientY);
+
+  if (isPanningDuringDrag) {
+    clearDragSubTreeHover();
+  } else {
+    updateDragTreeNavigationHover(event.clientX, event.clientY);
+  }
+}
+
+function isDragPanEvent(event) {
+  return event.altKey || (event.buttons & 4) !== 0;
 }
 
 function finishNodeDrag(event) {
