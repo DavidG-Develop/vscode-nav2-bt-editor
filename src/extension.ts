@@ -66,6 +66,7 @@ type WebviewMessage =
       type: "pasteNode";
       sourcePath: number[];
       parentPath: number[];
+      targetIndex?: number;
       move?: boolean;
     };
 
@@ -1574,7 +1575,8 @@ async function pasteNode(
       result = moveXmlNodeToParentByPath(
         xmlText,
         message.sourcePath,
-        message.parentPath
+        message.parentPath,
+        message.targetIndex
       );
     } catch (error) {
       const messageText = error instanceof Error ? error.message : String(error);

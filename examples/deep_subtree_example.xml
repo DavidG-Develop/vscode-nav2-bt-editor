@@ -9,6 +9,14 @@
                                  _autoremap="true"/>
       <FinalizeMission mission_id="{mission_id}" name="finalize"/>
       <NavigateThroughDoor door_id="{door_id}" goal="{goal}"/>
+      <Fallback>
+        <ApproachDock/>
+        <BackUp/>
+        <AsyncFallback>
+          <BackUp/>
+          <BackUp/>
+        </AsyncFallback>
+      </Fallback>
     </Sequence>
   </BehaviorTree>
   <BehaviorTree ID="NavigateMissionSubTree">

@@ -612,7 +612,8 @@ export function insertXmlNodeCopyByPath(
 export function moveXmlNodeToParentByPath(
   xmlText: string,
   sourcePath: number[],
-  parentPath: number[]
+  parentPath: number[],
+  targetIndex?: number
 ): MoveXmlNodeToParentResult {
   if (sourcePath.length < 2) {
     throw new Error("Root XML nodes cannot be cut from the editor.");
@@ -671,7 +672,12 @@ export function moveXmlNodeToParentByPath(
     );
   }
 
-  const result = insertNodeXmlIntoParent(xmlWithoutSource, parent, movingXml);
+  const result = insertNodeXmlIntoParent(
+    xmlWithoutSource,
+    parent,
+    movingXml,
+    targetIndex
+  );
 
   return {
     xmlText: result.xmlText,
@@ -781,22 +787,38 @@ function prefixCopiedNameAttribute(
 function formatNodeXmlForInsert(nodeXml: string, indent: string): string {
   const normalizedXml = removeBlankXmlLines(nodeXml.trim());
   const lines = normalizedXml.split(/\r?\n/);
-  const commonIndent = getCommonLineIndent(lines);
+  const firstLineIndent = getLeadingWhitespace(lines[0] ?? "");
+  const commonIndent =
+    lines.length > 1 && firstLineIndent.length === 0
+      ? getCommonLineIndent(lines.slice(1))
+      : getCommonLineIndent(lines);
 
   return lines
-    .map((line) => `${indent}${line.slice(commonIndent.length)}`)
+    .map((line) => `${indent}${removeCommonIndent(line, commonIndent)}`)
     .join("\n");
+}
+
+function removeCommonIndent(line: string, commonIndent: string): string {
+  return commonIndent && line.startsWith(commonIndent)
+    ? line.slice(commonIndent.length)
+    : line;
 }
 
 function insertNodeXmlIntoParent(
   xmlText: string,
   parent: InternalXmlNode,
-  nodeXml: string
+  nodeXml: string,
+  targetIndex?: number
 ): { xmlText: string; insertedPath: number[] } {
   const parentIndent = getLineIndentAtOffset(xmlText, parent.source.startOffset);
   const childIndent = `${parentIndent}  `;
   const formattedNodeXml = formatNodeXmlForInsert(nodeXml, childIndent);
-  const insertedPath = [...parent.source.path, parent.children.length];
+  const insertionIndex = clampIndex(
+    targetIndex ?? parent.children.length,
+    0,
+    parent.children.length
+  );
+  const insertedPath = [...parent.source.path, insertionIndex];
   const parentOpenTag = xmlText.slice(
     parent.source.startOffset,
     parent.source.endOpenTagOffset
@@ -822,6 +844,22 @@ function insertNodeXmlIntoParent(
 
   if (!parent.closeTag) {
     throw new Error(`Could not find closing tag for <${parent.tag}>.`);
+  }
+
+  if (insertionIndex < parent.children.length) {
+    const insertionOffset = getNodeDeletionRange(
+      xmlText,
+      parent.children[insertionIndex]
+    ).start;
+
+    return {
+      xmlText: removeBlankXmlLines(
+        xmlText.slice(0, insertionOffset) +
+        `\n${formattedNodeXml}` +
+        xmlText.slice(insertionOffset)
+      ),
+      insertedPath
+    };
   }
 
   const insertion = `\n${formattedNodeXml}\n${parentIndent}`;

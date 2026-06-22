@@ -385,6 +385,47 @@ test("cuts a node from one BehaviorTree into another BehaviorTree", () => {
   assert.deepEqual(result.movedPath, [...navigateSequence.source.path, 1]);
 });
 
+test("cuts a node into another parent at the requested child index", () => {
+  const xmlText = [
+    '<BehaviorTree ID="MainTree">',
+    "  <Sequence>",
+    '    <BackUp name="backup"/>',
+    "    <Fallback>",
+    "      <CloseDoor/>",
+    "      <OpenDoor/>",
+    "    </Fallback>",
+    "  </Sequence>",
+    "</BehaviorTree>"
+  ].join("\n");
+  const tree = parseFirstTree(xmlText);
+  const sequence = tree.children[0];
+  const backup = sequence.children[0];
+  const fallback = sequence.children[1];
+
+  const result = moveXmlNodeToParentByPath(
+    xmlText,
+    backup.source.path,
+    fallback.source.path,
+    0
+  );
+
+  assert.equal(
+    result.xmlText,
+    [
+      '<BehaviorTree ID="MainTree">',
+      "  <Sequence>",
+      "    <Fallback>",
+      '      <BackUp name="backup"/>',
+      "      <CloseDoor/>",
+      "      <OpenDoor/>",
+      "    </Fallback>",
+      "  </Sequence>",
+      "</BehaviorTree>"
+    ].join("\n")
+  );
+  assert.deepEqual(result.movedPath, [...sequence.source.path, 0, 0]);
+});
+
 test("rejects cutting a SubTree call into the BehaviorTree it references", () => {
   const xmlText = [
     '<BehaviorTree ID="MainTree">',

@@ -142,6 +142,38 @@ body {
   filter: drop-shadow(0 0 6px rgba(255, 152, 0, 0.65));
 }
 
+.bt-node-group.drop-target .bt-shape {
+  stroke: rgb(55, 180, 95);
+  stroke-width: 4;
+  stroke-dasharray: 5 4;
+  filter: drop-shadow(0 0 6px rgba(55, 180, 95, 0.6));
+}
+
+.bt-node-group.drag-valid .bt-shape {
+  stroke: rgb(55, 180, 95);
+  stroke-width: 4;
+  filter: drop-shadow(0 0 6px rgba(55, 180, 95, 0.6));
+}
+
+.bt-node-group.drag-invalid .bt-shape {
+  stroke: rgb(244, 71, 71);
+  stroke-width: 4;
+  filter: drop-shadow(0 0 6px rgba(244, 71, 71, 0.58));
+}
+
+.drop-zone {
+  fill: rgba(128, 128, 128, 0.06);
+  stroke: rgba(160, 160, 160, 0.72);
+  stroke-width: 2;
+  stroke-dasharray: 7 5;
+  pointer-events: none;
+}
+
+.drop-zone.active {
+  fill: rgba(55, 180, 95, 0.08);
+  stroke: rgb(55, 180, 95);
+}
+
 .bt-text {
   fill: var(--vscode-editor-foreground);
   dominant-baseline: middle;

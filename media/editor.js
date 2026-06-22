@@ -46,8 +46,11 @@ let currentViewportGroup = undefined;
 let currentSvg = undefined;
 let currentBounds = undefined;
 let currentLayoutRoots = [];
+let nodeGroupsByPath = new Map();
+let dropZoneElements = [];
 let nodeDragState = undefined;
 let suppressNextNodeClick = false;
+let suppressNextNodeClickTimer = undefined;
 
 initializeActiveRoot();
 attachGlobalKeyboardHandlers();
@@ -326,6 +329,8 @@ function renderTree() {
 
   const root = buildLayoutTree(activeRoot, new Set());
   currentLayoutRoots = [root];
+  nodeGroupsByPath = new Map();
+  dropZoneElements = [];
 
   measureSubtree(root);
   assignForestPositions([root]);
@@ -800,6 +805,12 @@ function drawNodes(parent, node) {
   const group = document.createElementNS("http://www.w3.org/2000/svg", "g");
   group.setAttribute("class", `bt-node-group kind-${node.kind} visual-${node.visualKind}`);
 
+  const pathKey = getPathKey(node.source?.path);
+
+  if (pathKey) {
+    nodeGroupsByPath.set(pathKey, group);
+  }
+
   if (!node.definitionKnown) {
     group.classList.add("unknown-node");
   }
@@ -828,6 +839,10 @@ function drawNodes(parent, node) {
 
     if (suppressNextNodeClick) {
       suppressNextNodeClick = false;
+      if (suppressNextNodeClickTimer !== undefined) {
+        window.clearTimeout(suppressNextNodeClickTimer);
+        suppressNextNodeClickTimer = undefined;
+      }
       return;
     }
 
@@ -874,8 +889,7 @@ function canMoveNode(node) {
     return false;
   }
 
-  const siblings = getSiblingNodes(node);
-  return siblings.length > 1;
+  return node.source.startOffset >= 0;
 }
 
 function startNodeDrag(event, node, group) {
@@ -891,8 +905,14 @@ function startNodeDrag(event, node, group) {
     group,
     pointerId: event.pointerId,
     startClientX: event.clientX,
+    startClientY: event.clientY,
     currentClientX: event.clientX,
+    currentClientY: event.clientY,
     startNodeX: node.x,
+    startNodeY: node.y,
+    dropTargetPath: undefined,
+    dropTargetGroup: undefined,
+    dropZone: undefined,
     hasMoved: false
   };
 
@@ -910,16 +930,30 @@ function handleNodeDragMove(event) {
   event.stopPropagation();
 
   const dx = (event.clientX - nodeDragState.startClientX) / viewState.scale;
+  const dy = (event.clientY - nodeDragState.startClientY) / viewState.scale;
 
-  if (Math.abs(event.clientX - nodeDragState.startClientX) > 4) {
+  const movedPastThreshold =
+    Math.abs(event.clientX - nodeDragState.startClientX) > 4 ||
+    Math.abs(event.clientY - nodeDragState.startClientY) > 4;
+
+  if (!nodeDragState.hasMoved && movedPastThreshold) {
     nodeDragState.hasMoved = true;
+    renderDragDropZones(nodeDragState.node);
   }
 
   nodeDragState.currentClientX = event.clientX;
+  nodeDragState.currentClientY = event.clientY;
+
+  if (!nodeDragState.hasMoved) {
+    return;
+  }
+
   nodeDragState.group.setAttribute(
     "transform",
-    `translate(${dx} 0)`
+    `translate(${dx} ${dy})`
   );
+
+  updateNodeDragDropTarget(event.clientX, event.clientY);
 }
 
 function finishNodeDrag(event) {
@@ -931,39 +965,72 @@ function finishNodeDrag(event) {
   event.stopPropagation();
 
   const dragState = nodeDragState;
+  const originalPath = [...(dragState.node.source?.path ?? [])];
+  const dropTargetPath = dragState.dropTargetPath
+    ? [...dragState.dropTargetPath]
+    : undefined;
+  const dropInsertionIndex = dragState.dropZone
+    ? getDropInsertionIndex(
+      dragState.dropZone.parentNode,
+      dragState.node,
+      clientPointToContentPoint(event.clientX, event.clientY)
+    )
+    : undefined;
+
   cleanupNodeDrag(event.pointerId);
 
   if (!dragState.hasMoved) {
     return;
   }
 
-  suppressNextNodeClick = true;
+  suppressImmediateDragClick();
 
-  const dx = (event.clientX - dragState.startClientX) / viewState.scale;
-  const draggedCenterX = dragState.startNodeX + dx;
-  const targetIndex = getReorderTargetIndex(dragState.node, draggedCenterX);
-  const originalPath = [...(dragState.node.source?.path ?? [])];
+  if (dropTargetPath) {
+    if (pathsEqual(originalPath.slice(0, -1), dropTargetPath)) {
+      const targetIndex = getReorderTargetIndex(
+        dragState.node,
+        dragState.startNodeX + (event.clientX - dragState.startClientX) / viewState.scale
+      );
 
-  if (targetIndex === undefined) {
+      if (targetIndex === undefined) {
+        renderTree();
+        return;
+      }
+
+      const movedPath = applyLocalNodeMove(originalPath, targetIndex);
+
+      if (!movedPath) {
+        renderTree();
+        return;
+      }
+
+      selectedNodePath = movedPath;
+      selectedNodeId = undefined;
+
+      vscode.postMessage({
+        type: "moveNode",
+        path: originalPath,
+        targetIndex
+      });
+
+      renderTree();
+      return;
+    }
+
+    selectedNodePath = undefined;
+    selectedNodeId = undefined;
+
+    vscode.postMessage({
+      type: "pasteNode",
+      sourcePath: originalPath,
+      parentPath: dropTargetPath,
+      targetIndex: dropInsertionIndex,
+      move: true
+    });
+
     renderTree();
     return;
   }
-
-  const movedPath = applyLocalNodeMove(originalPath, targetIndex);
-
-  if (!movedPath) {
-    renderTree();
-    return;
-  }
-
-  selectedNodePath = movedPath;
-  selectedNodeId = undefined;
-
-  vscode.postMessage({
-    type: "moveNode",
-    path: originalPath,
-    targetIndex
-  });
 
   renderTree();
 }
@@ -977,14 +1044,31 @@ function cancelNodeDrag(event) {
   renderTree();
 }
 
+function suppressImmediateDragClick() {
+  suppressNextNodeClick = true;
+
+  if (suppressNextNodeClickTimer !== undefined) {
+    window.clearTimeout(suppressNextNodeClickTimer);
+  }
+
+  suppressNextNodeClickTimer = window.setTimeout(() => {
+    suppressNextNodeClick = false;
+    suppressNextNodeClickTimer = undefined;
+  }, 0);
+}
+
 function cleanupNodeDrag(pointerId) {
   if (!nodeDragState) {
     return;
   }
 
+  clearNodeDragDropTarget();
+
   nodeDragState.group.removeEventListener("pointermove", handleNodeDragMove);
   nodeDragState.group.removeEventListener("pointerup", finishNodeDrag);
   nodeDragState.group.removeEventListener("pointercancel", cancelNodeDrag);
+  nodeDragState.group.classList.remove("drag-valid");
+  nodeDragState.group.classList.remove("drag-invalid");
   nodeDragState.group.style.cursor = canMoveNode(nodeDragState.node)
     ? "grab"
     : "pointer";
@@ -996,6 +1080,210 @@ function cleanupNodeDrag(pointerId) {
   }
 
   nodeDragState = undefined;
+  clearDragDropZones();
+}
+
+function updateNodeDragDropTarget(clientX, clientY) {
+  if (!nodeDragState) {
+    return;
+  }
+
+  const contentPoint = clientPointToContentPoint(clientX, clientY);
+  const targetZone = findDropZoneAtPoint(contentPoint);
+  const targetPath = targetZone?.parentPath;
+
+  if (pathsEqual(targetPath, nodeDragState.dropTargetPath)) {
+    return;
+  }
+
+  clearNodeDragDropTarget();
+
+  if (!targetPath) {
+    return;
+  }
+
+  const targetGroup = nodeGroupsByPath.get(getPathKey(targetPath));
+
+  if (!targetGroup) {
+    return;
+  }
+
+  targetGroup.classList.add("drop-target");
+  targetZone?.element.classList.add("active");
+  nodeDragState.group.classList.add("drag-valid");
+  nodeDragState.group.classList.remove("drag-invalid");
+  nodeDragState.dropTargetPath = targetPath;
+  nodeDragState.dropTargetGroup = targetGroup;
+  nodeDragState.dropZone = targetZone;
+}
+
+function clearNodeDragDropTarget() {
+  nodeDragState?.dropZone?.element.classList.remove("active");
+
+  if (!nodeDragState?.dropTargetGroup) {
+    if (nodeDragState?.hasMoved) {
+      nodeDragState.group.classList.remove("drag-valid");
+      nodeDragState.group.classList.add("drag-invalid");
+    }
+    return;
+  }
+
+  nodeDragState.dropTargetGroup.classList.remove("drop-target");
+  nodeDragState.dropTargetPath = undefined;
+  nodeDragState.dropTargetGroup = undefined;
+  nodeDragState.dropZone = undefined;
+  nodeDragState.group.classList.remove("drag-valid");
+  nodeDragState.group.classList.add("drag-invalid");
+}
+
+function clientPointToContentPoint(clientX, clientY) {
+  const rect = currentSvg?.getBoundingClientRect();
+
+  if (!rect) {
+    return {
+      x: 0,
+      y: 0
+    };
+  }
+
+  return {
+    x: (clientX - rect.left - viewState.x) / viewState.scale,
+    y: (clientY - rect.top - viewState.y) / viewState.scale
+  };
+}
+
+function renderDragDropZones(sourceNode) {
+  clearDragDropZones();
+
+  if (!currentViewportGroup) {
+    return;
+  }
+
+  const zonesGroup = document.createElementNS("http://www.w3.org/2000/svg", "g");
+  zonesGroup.setAttribute("class", "drop-zones");
+  currentViewportGroup.insertBefore(zonesGroup, currentViewportGroup.firstChild);
+
+  for (const root of currentLayoutRoots) {
+    collectDropZones(root, sourceNode, zonesGroup);
+  }
+}
+
+function collectDropZones(node, sourceNode, zonesGroup) {
+  if (canUseParentDropZone(sourceNode, node)) {
+    const zone = createDropZoneForParent(node, sourceNode);
+    const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+
+    rect.setAttribute("x", String(zone.x));
+    rect.setAttribute("y", String(zone.y));
+    rect.setAttribute("width", String(zone.width));
+    rect.setAttribute("height", String(zone.height));
+    rect.setAttribute("class", "drop-zone");
+
+    zonesGroup.appendChild(rect);
+
+    dropZoneElements.push({
+      ...zone,
+      parentPath: node.source.path,
+      parentNode: node,
+      element: rect
+    });
+  }
+
+  for (const child of node.children ?? []) {
+    collectDropZones(child, sourceNode, zonesGroup);
+  }
+}
+
+function clearDragDropZones() {
+  for (const zone of dropZoneElements) {
+    zone.element.remove();
+  }
+
+  dropZoneElements = [];
+  document.querySelectorAll(".drop-zones").forEach((element) => element.remove());
+}
+
+function findDropZoneAtPoint(point) {
+  return dropZoneElements
+    .filter((zone) => isPointInsideBox(point, zone))
+    .sort((left, right) =>
+      (right.parentPath?.length ?? 0) - (left.parentPath?.length ?? 0)
+    )[0];
+}
+
+function createDropZoneForParent(parentNode, sourceNode) {
+  const bounds = getDropZoneContentBounds(parentNode, sourceNode);
+  const paddingX = Math.max(28, STYLE.horizontalGap / 2);
+  const paddingY = Math.max(28, STYLE.verticalGap / 2);
+
+  return {
+    x: bounds.minX - paddingX,
+    y: bounds.minY - paddingY,
+    width: bounds.maxX - bounds.minX + paddingX * 2,
+    height: bounds.maxY - bounds.minY + paddingY * 2
+  };
+}
+
+function getDropZoneContentBounds(parentNode, sourceNode) {
+  const childNodes = (parentNode.children ?? []).filter(
+    (child) => !pathsEqual(child.source?.path, sourceNode.source?.path)
+  );
+
+  const bounds = {
+    minX: parentNode.x - parentNode.width / 2,
+    minY: parentNode.y - parentNode.height / 2,
+    maxX: parentNode.x + parentNode.width / 2,
+    maxY: parentNode.y + parentNode.height / 2
+  };
+
+  for (const child of childNodes) {
+    bounds.minX = Math.min(bounds.minX, child.x - child.width / 2);
+    bounds.minY = Math.min(bounds.minY, child.y - child.height / 2);
+    bounds.maxX = Math.max(bounds.maxX, child.x + child.width / 2);
+    bounds.maxY = Math.max(bounds.maxY, child.y + child.height / 2);
+  }
+
+  if (childNodes.length === 0) {
+    const childSlotTop = parentNode.y + parentNode.height / 2 + STYLE.verticalGap;
+    const childSlotHeight = 64;
+    const childSlotHalfWidth = Math.max(parentNode.width / 2, 96);
+
+    bounds.minX = Math.min(bounds.minX, parentNode.x - childSlotHalfWidth);
+    bounds.maxX = Math.max(bounds.maxX, parentNode.x + childSlotHalfWidth);
+    bounds.maxY = Math.max(bounds.maxY, childSlotTop + childSlotHeight);
+  }
+
+  return bounds;
+}
+
+function canUseParentDropZone(sourceNode, parentNode) {
+  const sourcePath = sourceNode.source?.path;
+  const parentPath = parentNode.source?.path;
+
+  if (!Array.isArray(sourcePath) || !Array.isArray(parentPath)) {
+    return false;
+  }
+
+  if (isPathPrefix(sourcePath, parentPath)) {
+    return false;
+  }
+
+  const childLimit = getChildLimitInfo(parentNode);
+
+  if (!childLimit.canAdd && !pathsEqual(sourcePath.slice(0, -1), parentPath)) {
+    return false;
+  }
+
+  return !containsSubTreeReferenceCycle(sourceNode, parentNode);
+}
+
+function isPointInsideBox(point, box) {
+  return (
+    point.x >= box.x &&
+    point.x <= box.x + box.width &&
+    point.y >= box.y &&
+    point.y <= box.y + box.height
+  );
 }
 
 function getReorderTargetIndex(node, draggedCenterX) {
@@ -1023,6 +1311,30 @@ function getReorderTargetIndex(node, draggedCenterX) {
   }
 
   return insertionIndex;
+}
+
+function getDropInsertionIndex(parentNode, sourceNode, dropPoint) {
+  if (!parentNode || !sourceNode || !dropPoint) {
+    return undefined;
+  }
+
+  const childNodes = (parentNode.children ?? []).filter(
+    (child) => !pathsEqual(child.source?.path, sourceNode.source?.path)
+  );
+
+  if (childNodes.length === 0) {
+    return 0;
+  }
+
+  const orderedChildren = [...childNodes].sort((left, right) => left.x - right.x);
+
+  for (let index = 0; index < orderedChildren.length; index += 1) {
+    if (dropPoint.x < orderedChildren[index].x) {
+      return index;
+    }
+  }
+
+  return orderedChildren.length;
 }
 
 function getSiblingNodes(node) {
@@ -1460,6 +1772,14 @@ function containsCutSubTreeReferenceToTargetBehaviorTree(
     !sourceNode ||
     !targetParentNode
   ) {
+    return false;
+  }
+
+  return containsSubTreeReferenceCycle(sourceNode, targetParentNode);
+}
+
+function containsSubTreeReferenceCycle(sourceNode, targetParentNode) {
+  if (!sourceNode || !targetParentNode) {
     return false;
   }
 
@@ -3535,6 +3855,10 @@ function pathsEqual(left, right) {
   }
 
   return left.every((value, index) => value === right[index]);
+}
+
+function getPathKey(path) {
+  return Array.isArray(path) ? path.join("/") : undefined;
 }
 
 function cssEscape(input) {
