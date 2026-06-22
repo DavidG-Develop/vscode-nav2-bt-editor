@@ -35,6 +35,8 @@ const STYLE = {
   marginY: 80
 };
 
+const DRAG_SUBTREE_OPEN_DELAY_MS = 1000;
+
 let viewState = {
   x: 0,
   y: 0,
@@ -51,12 +53,20 @@ let dropZoneElements = [];
 let nodeDragState = undefined;
 let suppressNextNodeClick = false;
 let suppressNextNodeClickTimer = undefined;
+let dragSubTreeOpenTimer = undefined;
+let dragSubTreeOpenPathKey = undefined;
 
 initializeActiveRoot();
 attachGlobalKeyboardHandlers();
 attachExtensionMessageHandlers();
 
 function initializeActiveRoot() {
+  if (!openOnlyOneBehaviorTree) {
+    const preferredRoot = findPreferredTopRoot(nodes);
+    activeRootPath = preferredRoot?.source?.path ?? nodes[0]?.source?.path;
+    return;
+  }
+
   if (selectedNodePath) {
     const selectedRoot = findRootContainingPath(nodes, selectedNodePath);
 
@@ -164,11 +174,7 @@ function applyXmlNodeSelection(path) {
   selectedNodePath = path;
   selectedNodeId = undefined;
 
-  const selectedRoot = findRootContainingPath(nodes, selectedNodePath);
-
-  if (selectedRoot) {
-    activeRootPath = selectedRoot.source?.path;
-  }
+  updateActiveRootAfterSelection(selectedNodePath);
 
   renderDetails(node);
   renderTree();
@@ -194,13 +200,7 @@ function applyParsedDocumentSync(parsedNodes, nextSelectedPath, refit) {
     : undefined;
   selectedNodeId = undefined;
 
-  const selectedRoot = findRootContainingPath(nodes, selectedNodePath);
-
-  if (selectedRoot) {
-    activeRootPath = selectedRoot.source?.path;
-  } else if (!findNodeByPathInForest(nodes, activeRootPath)) {
-    activeRootPath = findPreferredTopRoot(nodes)?.source?.path;
-  }
+  updateActiveRootAfterSelection(selectedNodePath);
 
   expandedSubTreeKeys = pruneUnreachableExpandedSubTrees();
   renderTree();
@@ -209,6 +209,22 @@ function applyParsedDocumentSync(parsedNodes, nextSelectedPath, refit) {
     requestAnimationFrame(() => {
       applyPostTreeChangeView();
     });
+  }
+}
+
+function updateActiveRootAfterSelection(path) {
+  if (!openOnlyOneBehaviorTree) {
+    const preferredRoot = findPreferredTopRoot(nodes);
+    activeRootPath = preferredRoot?.source?.path ?? nodes[0]?.source?.path;
+    return;
+  }
+
+  const selectedRoot = findRootContainingPath(nodes, path);
+
+  if (selectedRoot) {
+    activeRootPath = selectedRoot.source?.path;
+  } else if (!findNodeByPathInForest(nodes, activeRootPath)) {
+    activeRootPath = findPreferredTopRoot(nodes)?.source?.path;
   }
 }
 
@@ -903,6 +919,8 @@ function startNodeDrag(event, node, group) {
   nodeDragState = {
     node,
     group,
+    captureGroup: group,
+    isGhost: false,
     pointerId: event.pointerId,
     startClientX: event.clientX,
     startClientY: event.clientY,
@@ -916,9 +934,9 @@ function startNodeDrag(event, node, group) {
     hasMoved: false
   };
 
-  group.addEventListener("pointermove", handleNodeDragMove);
-  group.addEventListener("pointerup", finishNodeDrag);
-  group.addEventListener("pointercancel", cancelNodeDrag);
+  window.addEventListener("pointermove", handleNodeDragMove, true);
+  window.addEventListener("pointerup", finishNodeDrag, true);
+  window.addEventListener("pointercancel", cancelNodeDrag, true);
 }
 
 function handleNodeDragMove(event) {
@@ -948,12 +966,10 @@ function handleNodeDragMove(event) {
     return;
   }
 
-  nodeDragState.group.setAttribute(
-    "transform",
-    `translate(${dx} ${dy})`
-  );
+  positionDraggedNode(event.clientX, event.clientY, dx, dy);
 
   updateNodeDragDropTarget(event.clientX, event.clientY);
+  updateDragTreeNavigationHover(event.clientX, event.clientY);
 }
 
 function finishNodeDrag(event) {
@@ -961,10 +977,16 @@ function finishNodeDrag(event) {
     return;
   }
 
+  const dragState = nodeDragState;
+
+  if (!dragState.hasMoved) {
+    cleanupNodeDrag(event.pointerId);
+    return;
+  }
+
   event.preventDefault();
   event.stopPropagation();
 
-  const dragState = nodeDragState;
   const originalPath = [...(dragState.node.source?.path ?? [])];
   const dropTargetPath = dragState.dropTargetPath
     ? [...dragState.dropTargetPath]
@@ -978,10 +1000,6 @@ function finishNodeDrag(event) {
     : undefined;
 
   cleanupNodeDrag(event.pointerId);
-
-  if (!dragState.hasMoved) {
-    return;
-  }
 
   suppressImmediateDragClick();
 
@@ -1057,24 +1075,250 @@ function suppressImmediateDragClick() {
   }, 0);
 }
 
+function positionDraggedNode(clientX, clientY, dx, dy) {
+  if (!nodeDragState?.group) {
+    return;
+  }
+
+  if (nodeDragState.isGhost) {
+    const point = clientPointToContentPoint(clientX, clientY);
+    nodeDragState.group.setAttribute(
+      "transform",
+      `translate(${point.x - nodeDragState.node.x} ${point.y - nodeDragState.node.y})`
+    );
+    return;
+  }
+
+  nodeDragState.group.setAttribute(
+    "transform",
+    `translate(${dx} ${dy})`
+  );
+}
+
+function updateDragTreeNavigationHover(clientX, clientY) {
+  if (!openOnlyOneBehaviorTree || !nodeDragState?.hasMoved) {
+    clearDragSubTreeHover();
+    return;
+  }
+
+  const contentPoint = clientPointToContentPoint(clientX, clientY);
+  const hoverRoot = findBehaviorTreeNodeAtPoint(contentPoint);
+
+  if (
+    hoverRoot &&
+    rootNavigationStack.length > 0 &&
+    pathsEqual(hoverRoot.source?.path, activeRootPath)
+  ) {
+    scheduleDragTreeNavigation(
+      `up:${getPathKey(hoverRoot.source?.path)}`,
+      () => openParentTreeDuringDrag()
+    );
+    return;
+  }
+
+  const hoverNode = findSubTreeNodeAtPoint(contentPoint);
+  const hoverPath = hoverNode?.source?.path;
+  const sourcePath = nodeDragState.node.source?.path;
+  const hoverKey = getPathKey(hoverPath);
+
+  if (
+    !hoverNode ||
+    !hoverKey ||
+    pathsEqual(hoverPath, sourcePath) ||
+    !canOpenSubTreeDuringDrag(nodeDragState.node, hoverNode)
+  ) {
+    clearDragSubTreeHover();
+    return;
+  }
+
+  scheduleDragTreeNavigation(
+    `down:${hoverKey}`,
+    () => openSubTreeTargetDuringDrag(hoverNode)
+  );
+}
+
+function scheduleDragTreeNavigation(key, navigate) {
+  if (key === dragSubTreeOpenPathKey) {
+    return;
+  }
+
+  clearDragSubTreeHover();
+  dragSubTreeOpenPathKey = key;
+  dragSubTreeOpenTimer = window.setTimeout(navigate, DRAG_SUBTREE_OPEN_DELAY_MS);
+}
+
+function clearDragSubTreeHover() {
+  if (dragSubTreeOpenTimer !== undefined) {
+    window.clearTimeout(dragSubTreeOpenTimer);
+  }
+
+  dragSubTreeOpenTimer = undefined;
+  dragSubTreeOpenPathKey = undefined;
+}
+
+function canOpenSubTreeDuringDrag(sourceNode, subTreeNode) {
+  const targetId = subTreeNode.attributes?.ID;
+  const targetTree = targetId ? findBehaviorTreeById(nodes, targetId) : undefined;
+
+  if (!targetTree || pathsEqual(targetTree.source?.path, activeRootPath)) {
+    return false;
+  }
+
+  return !containsSubTreeReferenceCycle(sourceNode, targetTree);
+}
+
+function openSubTreeTargetDuringDrag(subTreeNode) {
+  if (!nodeDragState?.hasMoved || !canOpenSubTreeDuringDrag(nodeDragState.node, subTreeNode)) {
+    clearDragSubTreeHover();
+    return;
+  }
+
+  const targetTree = findBehaviorTreeById(nodes, subTreeNode.attributes?.ID);
+
+  if (!targetTree) {
+    clearDragSubTreeHover();
+    return;
+  }
+
+  navigateToRootDuringDrag(targetTree, true);
+}
+
+function openParentTreeDuringDrag() {
+  if (!nodeDragState?.hasMoved || rootNavigationStack.length === 0) {
+    clearDragSubTreeHover();
+    return;
+  }
+
+  const previousRootPath = rootNavigationStack[rootNavigationStack.length - 1];
+  const previousRoot = findNodeByPathInForest(nodes, previousRootPath);
+
+  if (!previousRoot) {
+    clearDragSubTreeHover();
+    return;
+  }
+
+  rootNavigationStack.pop();
+  navigateToRootDuringDrag(previousRoot, false);
+}
+
+function navigateToRootDuringDrag(targetRoot, pushCurrentRoot) {
+  if (!nodeDragState?.hasMoved || !targetRoot?.source?.path) {
+    clearDragSubTreeHover();
+    return;
+  }
+
+  const currentRoot = findNodeByPathInForest(nodes, activeRootPath);
+  const ghost = nodeDragState.group?.cloneNode(true);
+  const clientX = nodeDragState.currentClientX;
+  const clientY = nodeDragState.currentClientY;
+
+  clearDragSubTreeHover();
+  clearNodeDragDropTarget();
+
+  if (
+    pushCurrentRoot &&
+    currentRoot?.source?.path &&
+    !pathsEqual(currentRoot.source.path, targetRoot.source.path)
+  ) {
+    rootNavigationStack.push(currentRoot.source.path);
+  }
+
+  activeRootPath = targetRoot.source.path;
+  selectedNodeId = undefined;
+  selectedNodePath = targetRoot.source.path;
+
+  renderTree();
+
+  if (ghost && currentViewportGroup) {
+    ghost.classList.add("drag-ghost");
+    ghost.classList.remove("drop-target");
+    ghost.setAttribute("pointer-events", "none");
+    currentViewportGroup.appendChild(ghost);
+    nodeDragState.group = ghost;
+    nodeDragState.isGhost = true;
+  }
+
+  renderDragDropZones(nodeDragState.node);
+  positionDraggedNode(clientX, clientY, 0, 0);
+  updateNodeDragDropTarget(clientX, clientY);
+}
+
+function findSubTreeNodeAtPoint(point) {
+  const matches = [];
+
+  for (const root of currentLayoutRoots) {
+    collectSubTreeNodesAtPoint(root, point, matches);
+  }
+
+  return matches[matches.length - 1];
+}
+
+function findBehaviorTreeNodeAtPoint(point) {
+  const matches = [];
+
+  for (const root of currentLayoutRoots) {
+    collectBehaviorTreeNodesAtPoint(root, point, matches);
+  }
+
+  return matches[matches.length - 1];
+}
+
+function collectSubTreeNodesAtPoint(node, point, matches) {
+  if (isSubTreeNode(node) && isPointInsideNodeBox(point, node)) {
+    matches.push(node);
+  }
+
+  for (const child of node.children ?? []) {
+    collectSubTreeNodesAtPoint(child, point, matches);
+  }
+}
+
+function collectBehaviorTreeNodesAtPoint(node, point, matches) {
+  if (node.tag === "BehaviorTree" && isPointInsideNodeBox(point, node)) {
+    matches.push(node);
+  }
+
+  for (const child of node.children ?? []) {
+    collectBehaviorTreeNodesAtPoint(child, point, matches);
+  }
+}
+
+function isPointInsideNodeBox(point, node) {
+  return (
+    point.x >= node.x - node.width / 2 &&
+    point.x <= node.x + node.width / 2 &&
+    point.y >= node.y - node.height / 2 &&
+    point.y <= node.y + node.height / 2
+  );
+}
+
 function cleanupNodeDrag(pointerId) {
   if (!nodeDragState) {
     return;
   }
 
+  clearDragSubTreeHover();
   clearNodeDragDropTarget();
 
-  nodeDragState.group.removeEventListener("pointermove", handleNodeDragMove);
-  nodeDragState.group.removeEventListener("pointerup", finishNodeDrag);
-  nodeDragState.group.removeEventListener("pointercancel", cancelNodeDrag);
-  nodeDragState.group.classList.remove("drag-valid");
-  nodeDragState.group.classList.remove("drag-invalid");
-  nodeDragState.group.style.cursor = canMoveNode(nodeDragState.node)
-    ? "grab"
-    : "pointer";
+  window.removeEventListener("pointermove", handleNodeDragMove, true);
+  window.removeEventListener("pointerup", finishNodeDrag, true);
+  window.removeEventListener("pointercancel", cancelNodeDrag, true);
+
+  if (nodeDragState.group) {
+    nodeDragState.group.classList.remove("drag-valid");
+    nodeDragState.group.classList.remove("drag-invalid");
+    nodeDragState.group.classList.remove("drag-ghost");
+    nodeDragState.group.style.cursor = canMoveNode(nodeDragState.node)
+      ? "grab"
+      : "pointer";
+
+    if (nodeDragState.isGhost) {
+      nodeDragState.group.remove();
+    }
+  }
 
   try {
-    nodeDragState.group.releasePointerCapture(pointerId);
+    nodeDragState.captureGroup?.releasePointerCapture(pointerId);
   } catch {
     // Pointer capture may already be released by the webview.
   }

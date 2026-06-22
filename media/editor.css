@@ -161,6 +161,11 @@ body {
   filter: drop-shadow(0 0 6px rgba(244, 71, 71, 0.58));
 }
 
+.bt-node-group.drag-ghost {
+  opacity: 0.72;
+  pointer-events: none;
+}
+
 .drop-zone {
   fill: rgba(128, 128, 128, 0.06);
   stroke: rgba(160, 160, 160, 0.72);
