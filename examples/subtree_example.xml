@@ -2,17 +2,14 @@
   <BehaviorTree ID="MainTree">
     <Sequence name="MainMission">
       <ComputePathToPose goal="{goal}" path="{path}" planner_id="GridBased"/>
-
       <SubTree ID="DoorTraversalSubTree"
                door_id="{target_door}"
                goal="{goal}"
                path="{path}"
                _autoremap="true"/>
-
       <FollowPath path="{path}" controller_id="FollowPath"/>
     </Sequence>
   </BehaviorTree>
-
   <BehaviorTree ID="DoorTraversalSubTree">
     <Fallback name="DoorTraversalFallback">
       <Sequence name="DoorAlreadyOpenSequence">
@@ -20,46 +17,38 @@
           <IsDoorClosed door_id="{door_id}"/>
         </Inverter>
         <NavigateThroughDoor door_id="{door_id}" goal="{goal}"/>
+        <CloseDoor door_id="{door_id}"/>
       </Sequence>
-
       <Sequence name="OpenAndTraverseDoorSequence">
         <RetryUntilSuccessful num_attempts="4" name="RetryDoorOpening">
-          <OpenDoor door_id="{door_id}"/>
+          <OpenDoor door_id="{door_id}" name="name2"/>
         </RetryUntilSuccessful>
-
         <NavigateThroughDoor door_id="{door_id}" goal="{goal}"/>
-
         <CloseDoor door_id="{door_id}"/>
       </Sequence>
     </Fallback>
   </BehaviorTree>
-
   <TreeNodesModel>
     <Action ID="ComputePathToPose">
       <input_port name="goal"/>
       <output_port name="path"/>
       <input_port name="planner_id"/>
     </Action>
-
     <Action ID="FollowPath">
       <input_port name="path"/>
       <input_port name="controller_id"/>
     </Action>
-
     <Condition ID="IsDoorClosed">
       <input_port name="door_id"/>
     </Condition>
-
     <Action ID="OpenDoor">
       <input_port name="door_id"/>
       <input_port name="timeout"/>
     </Action>
-
     <Action ID="NavigateThroughDoor">
       <input_port name="door_id"/>
       <input_port name="goal"/>
     </Action>
-
     <Action ID="CloseDoor">
       <input_port name="door_id"/>
     </Action>
