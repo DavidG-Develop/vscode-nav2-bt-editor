@@ -3,6 +3,7 @@ import {
   BehaviorTreeTemplate,
   BehaviorTreeTemplateMap,
   BtNode,
+  changeXmlNodeTypeByPath,
   deleteBehaviorTreeById,
   deleteXmlNodeByPath,
   getTreeNodeDefinitionCatalog,
@@ -40,6 +41,12 @@ type WebviewMessage =
       path: number[];
       attrName: string;
       attrValue: string;
+    }
+  | {
+      type: "changeNodeType";
+      path: number[];
+      tagName: string;
+      allowedAttributes: string[];
     }
   | {
       type: "addChildNode";
@@ -298,6 +305,41 @@ export function activate(context: vscode.ExtensionContext): void {
             }
 
             updateXmlSelectionDecoration();
+
+            return;
+          }
+
+          if (message.type === "changeNodeType") {
+            suppressEditorSideEffects(2500);
+
+            const result = await changeNodeType(targetDocument, message);
+
+            if (!result) {
+              suppressDocumentRefreshUntil = 0;
+              suppressXmlSelectionSyncUntil = 0;
+              syncWebviewFromDocument();
+              return;
+            }
+
+            selectedPath = result.changedPath;
+
+            const autoSaveEdits = getAutoSaveEditsSetting(targetDocument.uri);
+
+            if (autoSaveEdits) {
+              suppressEditorSideEffects(2500);
+
+              const saved = await targetDocument.save();
+
+              suppressEditorSideEffects(2500);
+
+              if (!saved) {
+                vscode.window.showWarningMessage(
+                  "XML node type was changed, but the file could not be saved automatically."
+                );
+              }
+            }
+
+            syncWebviewFromDocument();
 
             return;
           }
@@ -1481,6 +1523,48 @@ async function updateAttribute(
     updatedXml,
     "Failed to update XML attribute."
   );
+}
+
+async function changeNodeType(
+  document: vscode.TextDocument,
+  message: Extract<WebviewMessage, { type: "changeNodeType" }>
+): Promise<{ changedPath: number[] } | undefined> {
+  const xmlText = document.getText();
+
+  let result;
+
+  try {
+    result = changeXmlNodeTypeByPath(
+      xmlText,
+      message.path,
+      message.tagName,
+      message.allowedAttributes
+    );
+  } catch (error) {
+    const messageText = error instanceof Error ? error.message : String(error);
+    vscode.window.showErrorMessage(messageText);
+    return undefined;
+  }
+
+  if (result.xmlText === xmlText) {
+    return {
+      changedPath: result.changedPath
+    };
+  }
+
+  const success = await replaceFullDocument(
+    document,
+    result.xmlText,
+    "Failed to change XML node type."
+  );
+
+  if (!success) {
+    return undefined;
+  }
+
+  return {
+    changedPath: result.changedPath
+  };
 }
 
 async function addChildNode(

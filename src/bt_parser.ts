@@ -79,6 +79,11 @@ export type CopyXmlNodeResult = {
   copiedPath: number[];
 };
 
+export type ChangeXmlNodeTypeResult = {
+  xmlText: string;
+  changedPath: number[];
+};
+
 type InternalXmlNode = Omit<
   BtNode,
   "kind" | "children" | "definitionKnown" | "definition"
@@ -326,6 +331,65 @@ export function insertXmlChildNodeByPath(
       xmlText.slice(parent.closeTag.startOffset)
     ),
     childPath
+  };
+}
+
+export function changeXmlNodeTypeByPath(
+  xmlText: string,
+  path: number[],
+  nextTagName: string,
+  allowedAttributes?: string[]
+): ChangeXmlNodeTypeResult {
+  validateXmlName(nextTagName, "node tag");
+
+  const roots = scanXml(xmlText);
+  const target = findNodeByPath(roots, path);
+
+  if (!target) {
+    throw new Error(`Could not find XML node at path [${path.join(", ")}].`);
+  }
+
+  const allowedAttributeSet = allowedAttributes
+    ? new Set(allowedAttributes)
+    : undefined;
+  const startTag = xmlText.slice(
+    target.source.startOffset,
+    target.source.endOpenTagOffset
+  );
+  const nextOpenTag = rewriteOpenTagNameAndFilterAttributes(
+    startTag,
+    nextTagName,
+    allowedAttributeSet
+  );
+  const nextCloseTag =
+    target.closeTag
+      ? `</${nextTagName}>`
+      : undefined;
+
+  let updatedXml =
+    xmlText.slice(0, target.source.startOffset) +
+    nextOpenTag +
+    xmlText.slice(target.source.endOpenTagOffset);
+
+  if (target.closeTag && nextCloseTag) {
+    const closeStart =
+      target.closeTag.startOffset +
+      nextOpenTag.length -
+      startTag.length;
+    const closeEnd =
+      target.closeTag.endOffset +
+      nextOpenTag.length -
+      startTag.length;
+
+    updatedXml =
+      updatedXml.slice(0, closeStart) +
+      nextCloseTag +
+      updatedXml.slice(closeEnd);
+  }
+
+  return {
+    xmlText: removeBlankXmlLines(updatedXml),
+    changedPath: path
   };
 }
 
@@ -1787,6 +1851,22 @@ function setAttributeInOpenTag(
   }
 
   return openTag.replace(/\s*>$/, `${insertText}>`);
+}
+
+function rewriteOpenTagNameAndFilterAttributes(
+  openTag: string,
+  nextTagName: string,
+  allowedAttributes?: Set<string>
+): string {
+  const selfClosing = isSelfClosingOpenTag(openTag);
+  const attributes = extractAttributes(openTag, openTag, 0);
+  const keptAttributes = Object.entries(attributes)
+    .filter(([name]) => !allowedAttributes || allowedAttributes.has(name));
+  const attributeText = keptAttributes
+    .map(([name, value]) => ` ${name}="${encodeXmlAttribute(value, '"')}"`)
+    .join("");
+
+  return `<${nextTagName}${attributeText}${selfClosing ? "/>" : ">"}`;
 }
 
 function removeAttributeFromOpenTag(

@@ -1,6 +1,7 @@
 import assert = require("node:assert/strict");
 import test = require("node:test");
 import {
+  changeXmlNodeTypeByPath,
   deleteXmlNodeByPath,
   hasSubTreeReferenceToBehaviorTree,
   insertXmlNodeCopyByPath,
@@ -261,6 +262,68 @@ test("copies a subtree call without duplicating its implementation", () => {
     result.xmlText.match(/<BehaviorTree ID="InitTree">/g)?.length,
     1
   );
+});
+
+test("changes a self-closing node type and filters unsupported attributes", () => {
+  const xmlText = [
+    '<BehaviorTree ID="MainTree">',
+    "  <Sequence>",
+    '    <CloseDoor name="door" door_id="{door_id}" stale="drop"/>',
+    "  </Sequence>",
+    "</BehaviorTree>"
+  ].join("\n");
+  const tree = parseFirstTree(xmlText);
+  const closeDoor = tree.children[0].children[0];
+
+  const result = changeXmlNodeTypeByPath(
+    xmlText,
+    closeDoor.source.path,
+    "OpenDoor",
+    ["name", "door_id"]
+  );
+
+  assert.equal(
+    result.xmlText,
+    [
+      '<BehaviorTree ID="MainTree">',
+      "  <Sequence>",
+      '    <OpenDoor name="door" door_id="{door_id}"/>',
+      "  </Sequence>",
+      "</BehaviorTree>"
+    ].join("\n")
+  );
+  assert.deepEqual(result.changedPath, closeDoor.source.path);
+});
+
+test("changes an open and close node tag while preserving children", () => {
+  const xmlText = [
+    '<BehaviorTree ID="MainTree">',
+    '  <Sequence name="main" extra="drop">',
+    "    <AlwaysSuccess/>",
+    "  </Sequence>",
+    "</BehaviorTree>"
+  ].join("\n");
+  const tree = parseFirstTree(xmlText);
+  const sequence = tree.children[0];
+
+  const result = changeXmlNodeTypeByPath(
+    xmlText,
+    sequence.source.path,
+    "ReactiveSequence",
+    ["name"]
+  );
+
+  assert.equal(
+    result.xmlText,
+    [
+      '<BehaviorTree ID="MainTree">',
+      '  <ReactiveSequence name="main">',
+      "    <AlwaysSuccess/>",
+      "  </ReactiveSequence>",
+      "</BehaviorTree>"
+    ].join("\n")
+  );
+  assert.deepEqual(result.changedPath, sequence.source.path);
 });
 
 test("cuts a node into another parent without renaming it", () => {

@@ -1941,6 +1941,7 @@ function renderDetails(node) {
     </div>
 
     ${renderAttributeSections(node, definition, extraAttributes)}
+    ${renderChangeTypeSection(node)}
     ${renderCopyPasteSection(node, childLimit)}
     ${renderDeleteSection(node)}
     ${renderAddBehaviorTreeSection(node)}
@@ -1960,6 +1961,7 @@ function renderDetails(node) {
   }
 
   attachAttributeHandlers(node);
+  attachChangeTypeHandlers(node);
   attachCopyPasteHandlers(node);
   attachDeleteHandlers(node);
   attachAddBehaviorTreeHandlers(node);
@@ -2033,6 +2035,129 @@ function renderAttributeSections(node, definition, extraAttributes) {
   }
 
   return sections.join("");
+}
+
+function renderChangeTypeSection(node) {
+  if (!canChangeNodeType(node)) {
+    return `
+      <h3>Change type</h3>
+      <div class="info-box">
+        ${escapeHtml(getChangeTypeUnavailableReason(node))}
+      </div>
+    `;
+  }
+
+  const definitions = getCompatibleTypeDefinitions(node);
+
+  if (definitions.length === 0) {
+    return `
+      <h3>Change type</h3>
+      <div class="info-box">
+        No compatible alternative node types are available.
+      </div>
+    `;
+  }
+
+  return `
+    <h3>Change type</h3>
+    <div class="info-box">
+      Change this ${escapeHtml(getDisplayCategory(node))} to another compatible type. Position and children are preserved.
+    </div>
+    <label for="change-node-type-select" class="field-label"><strong>Compatible node type</strong></label>
+    <select id="change-node-type-select" class="attr-input change-type-select" size="8">
+      ${definitions
+        .map((definition) => `
+          <option value="${escapeHtml(definition.id)}">
+            ${escapeHtml(definition.id)}
+          </option>
+        `)
+        .join("")}
+    </select>
+    <div id="change-node-type-preview"></div>
+    <button id="change-node-type-button" class="attr-apply-button">
+      Change node type
+    </button>
+  `;
+}
+
+function canChangeNodeType(node) {
+  if (!Array.isArray(node.source?.path) || node.source.startOffset < 0) {
+    return false;
+  }
+
+  if (node.tag === "BehaviorTree") {
+    return false;
+  }
+
+  const childCount = node.children?.length ?? 0;
+
+  if ((node.kind === "action" || node.kind === "condition") && childCount > 0) {
+    return false;
+  }
+
+  if (node.kind === "decorator" && childCount > 1) {
+    return false;
+  }
+
+  if (isSubTreeNode(node)) {
+    return false;
+  }
+
+  return true;
+}
+
+function getChangeTypeUnavailableReason(node) {
+  if (!Array.isArray(node.source?.path) || node.source.startOffset < 0) {
+    return "Node type can be changed after the node has been parsed from XML.";
+  }
+
+  if (node.tag === "BehaviorTree") {
+    return "BehaviorTree root nodes cannot be changed to another type.";
+  }
+
+  const childCount = node.children?.length ?? 0;
+
+  if ((node.kind === "action" || node.kind === "condition") && childCount > 0) {
+    return "Leaf nodes with children cannot be changed to another leaf type.";
+  }
+
+  if (node.kind === "decorator" && childCount > 1) {
+    return "Decorator nodes with more than one child cannot be changed to another decorator.";
+  }
+
+  if (isSubTreeNode(node)) {
+    return "SubTree nodes cannot be changed with this control.";
+  }
+
+  return "This node type cannot be changed.";
+}
+
+function getCompatibleTypeDefinitions(node) {
+  const category = getChangeTypeCategory(node);
+
+  if (!category) {
+    return [];
+  }
+
+  return getDefinitionsByKind(category)
+    .filter((definition) => definition.id !== node.tag);
+}
+
+function getChangeTypeCategory(node) {
+  if (
+    node.kind === "control" ||
+    node.kind === "decorator" ||
+    node.kind === "condition" ||
+    node.kind === "action"
+  ) {
+    return node.kind;
+  }
+
+  return undefined;
+}
+
+function getAllowedAttributesForDefinition(definition) {
+  return (definition?.ports ?? []).map((port) => port.name);
 }
 
 function renderCopyPasteSection(node, childLimit) {
@@ -2526,6 +2651,74 @@ function attachAttributeHandlers(node) {
       });
     });
   }
+}
+
+function attachChangeTypeHandlers(node) {
+  const select = document.getElementById("change-node-type-select");
+  const button = document.getElementById("change-node-type-button");
+  const preview = document.getElementById("change-node-type-preview");
+
+  if (!select || !button || !preview) {
+    return;
+  }
+
+  if (!findDefinitionById(select.value) && select.options.length > 0) {
+    select.value = select.options[0].value;
+  }
+
+  const updatePreview = () => {
+    const definition = findDefinitionById(select.value);
+
+    if (!definition) {
+      preview.innerHTML = `
+        <div class="warning-box">
+          Selected node type is no longer available.
+        </div>
+      `;
+      button.disabled = true;
+      return;
+    }
+
+    const allowedAttributes = new Set(getAllowedAttributesForDefinition(definition));
+    const attributeEntries = Object.entries(node.attributes ?? {});
+    const keptAttributes = attributeEntries
+      .filter(([name]) => allowedAttributes.has(name))
+      .map(([name]) => name);
+    const droppedAttributes = attributeEntries
+      .filter(([name]) => !allowedAttributes.has(name))
+      .map(([name]) => name);
+
+    preview.innerHTML = `
+      <div class="info-box">
+        Keeps ${escapeHtml(formatAttributeList(keptAttributes))}. Drops ${escapeHtml(formatAttributeList(droppedAttributes))}.
+      </div>
+    `;
+    button.disabled = false;
+  };
+
+  select.addEventListener("change", updatePreview);
+  button.addEventListener("click", () => {
+    const definition = findDefinitionById(select.value);
+
+    if (!definition) {
+      return;
+    }
+
+    vscode.postMessage({
+      type: "changeNodeType",
+      path: node.source.path,
+      tagName: definition.id,
+      allowedAttributes: getAllowedAttributesForDefinition(definition)
+    });
+  });
+
+  updatePreview();
+}
+
+function formatAttributeList(attributeNames) {
+  return attributeNames.length > 0
+    ? attributeNames.join(", ")
+    : "none";
 }
 
 function attachCopyPasteHandlers(node) {

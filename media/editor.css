@@ -295,6 +295,15 @@ body {
   background: var(--vscode-input-background);
 }
 
+.field-label {
+  display: block;
+  margin-bottom: 6px;
+}
+
+.change-type-select {
+  margin-bottom: 8px;
+}
+
 .attr-apply-button,
 #reveal-node-button,
 #add-attr-button {

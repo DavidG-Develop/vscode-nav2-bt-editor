@@ -12,9 +12,10 @@
       <Fallback>
         <ApproachDock/>
         <BackUp/>
-        <AsyncFallback>
+        <AsyncFallback name="fallback">
+          <AlignToDock name="align"/>
           <BackUp/>
-          <BackUp/>
+          <AlignToDock docking_station="1"/>
         </AsyncFallback>
       </Fallback>
     </Sequence>
