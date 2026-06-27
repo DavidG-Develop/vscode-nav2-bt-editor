@@ -11,6 +11,7 @@ Nav2 BT Editor is built for developers who work directly with Nav2 BT XML files,
 - Visualize `BehaviorTree` XML as an editable graph.
 - Edit node attributes and write changes back to XML.
 - Add child nodes from imported `TreeNodesModel` ports, built-in Nav2 fallback definitions, or custom tag names.
+- Change a node to another compatible type without deleting and recreating it.
 - Drag nodes to reorder siblings or move them under another valid parent.
 - Use visible drop zones, green/red drag feedback, and snap-back for invalid drops.
 - Navigate SubTrees one tree at a time, or expand SubTrees inline in one large graph.
@@ -61,6 +62,8 @@ Click a node in the graph to open its details panel.
 For known nodes, the panel shows attributes and ports from the current XML file's `TreeNodesModel`, imported `TreeNodesModel` files, or the built-in fallback catalog. Unknown nodes remain editable with manual custom attributes.
 
 Select a parent node and use the add-child controls in the details panel to add a known node type or custom XML tag.
+
+Use the compatible type control to change a known action, condition, decorator, or control node to another node in the same category. Attributes that are still valid for the new node type are kept; unsupported attributes are removed. `BehaviorTree` roots and `SubTree` calls are not changed through this control.
 
 When adding a `SubTree`, imported `BehaviorTree` templates appear in the SubTree list. Selecting one fills `ID` and `_autoremap="true"`.
 
